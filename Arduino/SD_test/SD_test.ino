@@ -6,12 +6,11 @@
  * 
  */
 
-#include <Adafruit_TinyUSB.h>
 #include <SPI.h>
 #include <SD.h>
 
 // CONSTANTS
-#define SD_CS_PIN 29                        // pin connected to SD CS
+#define SD_CS_PIN 23                        // pin connected to SD CS
 #define SD_EJECT_DETECT_PIN 2               // pin connected to SD EJECT 
 #define LOG_FILENAME "LOG.CSV"              // the log filename on the SD
 
@@ -46,14 +45,17 @@ class Storage {
         return;
       }
       // SD started, open log file, or create it if it doesn't exist.
+      //open_file();
+    }
+
+    void open_file() {
       this->log_file = SD.open(this->log_file_name, FILE_WRITE);
     }
 
-    void open_file(String filename) {
-      
+    void write_line(String line) {
+      this->log_file.println(line);
     }
-
-
+    
     String read_line(unsigned int line){
 
       String line_to_ret = "";
@@ -83,17 +85,7 @@ class Storage {
       this->log_file.close();
     }
   
-    // write a character only. Newlines must be added manually
-    void write_char(char data) {
-      /* Write character by character into the log file */
-      this->log_file.print(data);
-    }
-  
-    // write a line and add a new line
-//    bool write_line(String data) {
-//      SD.println(data);
-//    }
-//  
+
     // did the SD class initialize correctly?
     bool is_errored(){
       return this->ERR;
