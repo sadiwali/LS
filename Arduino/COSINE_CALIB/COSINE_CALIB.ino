@@ -43,18 +43,25 @@
 #include <SPI.h>
 #include <SD.h>
 
+
+
 // CONSTANTS
 #define SD_CS_PIN 22                        // pin connected to SD CS
 #define SD_EJECT_DETECT_PIN 5               // pin connected to SD EJECT 
 #define LOG_FILENAME "LOG.CSV"              // the log filename on the SD
 
-using namespace NanoLambdaNSP32;
-
+// PINS
 const unsigned int PinRst	= 19;  	          // pin Reset
 const unsigned int PinReady	= 23;  	        // pin Ready
 
+// VARIABLES
+bool pressed = false;                       // for help detecting push button press
+bool sd_newly_inserted = false;             // for help detecting new SD insertion
+
 ArduinoAdaptor adaptor(PinRst);				      // master MCU adaptor
 NSP32 nsp32(&adaptor, NSP32::ChannelSpi);	  // NSP32 (using SPI channel)
+
+using namespace NanoLambdaNSP32;
 
 // The Storage class
 class Storage {
@@ -177,8 +184,8 @@ void setup()
 	//while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
   Serial.println("START");
 
-  // 5 attempts to initialize SD (should pass in first attempt)
-  for (int i = 0; i < 5; i++) {
+  // attempt to initialize the SD
+  while true {
     // initialize SD
     st.init();
     if (!st.is_errored()) {
@@ -197,8 +204,7 @@ void setup()
 
 }
 
-bool pressed = false;             // for help detecting push button press
-bool sd_newly_inserted = false;   // for help detecting new SD insertion
+
 
 void loop() 
 {
