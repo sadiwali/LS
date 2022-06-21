@@ -44,6 +44,7 @@
 
 #include <SD.h>
 
+using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22 // pin connected to SD CS
@@ -61,7 +62,6 @@ bool sd_newly_inserted = false; // for help detecting new SD insertion
 ArduinoAdaptor adaptor(PinRst); // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi); // NSP32 (using SPI channel)
 
-using namespace NanoLambdaNSP32;
 
 // The Storage class
 class Storage {
@@ -184,7 +184,7 @@ void setup() {
   Serial.println("START");
 
   // attempt to initialize the SD
-  while true {
+  while (true) {
     // initialize SD
     st.init();
     if (!st.is_errored()) {
@@ -220,11 +220,14 @@ void loop() {
   String line = "";
 
   // write the line
-  for (int i = 0; i < infoW.NumOfPoints; i++) {
+  for (int i = 0; i < infoS.NumOfPoints; i++) {
     //Serial.println(sizeof(infoS.Spectrum[i]));
     line.concat(String(infoS.Spectrum[i], 18)); // write with 18 digits (precise)
     //Serial.println(String(infoS.Spectrum[i], 18));
-    line.concat(",");
+    // add a comma unless its the last value
+    if (i != infoS.NumOfPoints - 1) {
+      line.concat(",");
+    }
   }
   write_to_sd(line); // write the data to the SD card
 
@@ -235,7 +238,7 @@ void loop() {
 void write_to_sd(String line) {
   // turn on the LED to indicate writing
   Serial.println("writing...");
-  digitalWrite(7, HIGH);
+  //digitalWrite(7, HIGH);
   st.open_file();
   delay(100);
   st.write_line(line);
