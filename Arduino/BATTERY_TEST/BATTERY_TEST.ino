@@ -37,13 +37,9 @@
  */
 
 #include <ArduinoAdaptor.h>
-
 #include <NSP32.h>
-
 #include <SPI.h>
-
 #include <SD.h>
-
 
 // CONSTANTS
 #define SD_CS_PIN 22 // pin connected to SD CS
@@ -58,25 +54,29 @@ const unsigned int PinReady = 23; // pin Ready
 bool pressed = false; // for help detecting push button press
 bool sd_newly_inserted = false; // for help detecting new SD insertion
 
+// DATE TIME
+String myTime = __TIME__;
+String myDate = __DATE__;
+
 ArduinoAdaptor adaptor(PinRst); // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi); // NSP32 (using SPI channel)
 
 using namespace NanoLambdaNSP32;
 
-// The Storage class
+/* The storage class deals with the microSD card, and file management within the card. */
 class Storage {
   private:
     String log_file_name; // file name and directory to save the CSV data log to
-  File log_file; // the file variable that holds the log file
-  int CS_PIN; // the SPI chip select pin
-  int CHECK_PIN; // SD card eject detection pin (HIGH when ejected, LOW when inserted)
-  bool ERR = false; // was there an error with the Storage class?
+    File log_file; // the file variable that holds the log file
+    int CS_PIN; // the SPI chip select pin
+    int CHECK_PIN; // SD card eject detection pin (HIGH when ejected, LOW when inserted)
+    bool ERR = false; // was there an error with the Storage class?
 
-  const int DEBOUNCE_DELAY = 1000; // the debounce time; increase if the output flickers
-  int lastSteadyState = LOW; // the previous steady state from the input pin
-  int lastFlickerableState = LOW; // the previous flickerable state from the input pin
-  int currentState; // the current reading from the input pin
-  unsigned long lastDebounceTime = 0; // the last time the output pin was toggled
+    const int DEBOUNCE_DELAY = 1000; // the debounce time; increase if the output flickers
+    int lastSteadyState = LOW; // the previous steady state from the input pin
+    int lastFlickerableState = LOW; // the previous flickerable state from the input pin
+    int currentState; // the current reading from the input pin
+    unsigned long lastDebounceTime = 0; // the last time the output pin was toggled
 
   public:
     Storage(int CS, int check_pin, String filename) {
@@ -220,6 +220,21 @@ void loop() {
   String line = "";
 
   // write the line
+  // first put in the time
+  line.concat();
+  line.concat(",");
+  // Then put in the isSaturated flag
+  line.concat(String(infoS.isSaturated));
+  line.concat(",");
+  // Then put in the CIE1931 coords
+  line.concat(String(infoS.X));
+  line.concat(",");
+  line.concat(String(infoS.Y));
+  line.concat(",");
+  line.concat(String(infoS.Z));
+  line.concat(",");
+   
+  // Then put in the spectrum data
   for (int i = 0; i < infoW.NumOfPoints; i++) {
     //Serial.println(sizeof(infoS.Spectrum[i]));
     line.concat(String(infoS.Spectrum[i], 18)); // write with 18 digits (precise)
