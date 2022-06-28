@@ -1,36 +1,47 @@
 /**
- * A simple script that collects spectrum data every 10 seconds, and stores it in a file on an SD card.
+ * A simple script that collects spectrum data every 60 seconds, and stores it in a file on an SD card.
  * Meant to test battery capacity.
  * 
- * Typical pin layout used:
- * ---------------------------------------------------------
- *               NSP32      Arduino       Arduino   Arduino   
- *  SPI                     Uno/101       Mega      Nano v3 
- * Signal        Pin          Pin           Pin       Pin     
- * -----------------------------------------------------------
- * Wakeup/Reset  RST          8             49        D8      
- * SPI SSEL      SS           10            53        D10     
- * SPI MOSI      MOSI         11 / ICSP-4   51        D11     
- * SPI MISO      MISO         12 / ICSP-1   50        D12     
- * SPI SCK       SCK          13 / ICSP-3   52        D13     
- * Ready         Ready        2             21        D2
- *
- *
+ * Pin layout used:
+ * ------------------------------------
+ *               NSP32      Sparkfun       
+ * SPI                      nRF52840     
+ * Signal        Pin          Pin        
+ * ------------------------------------
+ * Wakeup/Reset  RST          19    
+ * SPI SSEL      SS           21    
+ * SPI MOSI      MOSI         3    
+ * SPI MISO      MISO         31  
+ * SPI SCK       SCK          30   
+ * Ready         Ready        20
+ * ------------------------------------
+ *               SD Card
+ *               Pin
+ * ------------------------------------
+ * SPI SSEL      CS           22
+ * CARD DETECT   CD           5
  */
+
+
 
 #include <ArduinoAdaptor.h>
 #include <NSP32.h>
 #include <SPI.h>
 #include <SD.h>
 
+using namespace NanoLambdaNSP32;
+
+
 // CONSTANTS
 #define SD_CS_PIN 22 // pin connected to SD CS
 #define SD_EJECT_DETECT_PIN 5 // pin connected to SD EJECT 
-#define LOG_FILENAME "LOG.CSV" // the log filename on the SD
+#define LOG_FILENAME "INT.CSV" // the log filename on the SD
+#define NSP_RESET 19
+#define NSP_READY 23
 
 // PINS
-const unsigned int PinRst = 19; // pin Reset
-const unsigned int PinReady = 23; // pin Ready
+const unsigned int PinRst = NSP_RESET; // pin Reset
+const unsigned int PinReady = NSP_READY; // pin Ready
 
 // VARIABLES
 bool pressed = false; // for help detecting push button press
@@ -40,11 +51,8 @@ bool sd_newly_inserted = false; // for help detecting new SD insertion
 String myTime = __TIME__;
 String myDate = __DATE__;
 
-using namespace NanoLambdaNSP32;
-
 ArduinoAdaptor adaptor(PinRst); // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi); // NSP32 (using SPI channel)
-
 
 
 /* The storage class deals with the microSD card, and file management within the card. */
@@ -80,15 +88,25 @@ class Storage {
   }
 
   void open_file() {
-    this -> log_file = SD.open(this -> log_file_name, FILE_WRITE);
+    for (int i = 0; i < 5; i ++) {
+      this -> log_file = SD.open(this -> log_file_name, FILE_WRITE);
+      if (this->log_file) {
+        break;
+      }
+
+      // wait 1 second before attempting to open again
+      delay(1000);
+    }
   }
 
   void close_file() {
     this -> log_file.close();
   }
 
-  void write_line(String line) {
-    this -> log_file.println(line);
+
+  void write_line(String *line) {
+    // if the line is too long, split it up and write twice
+    this -> log_file.println(*line);
   }
 
   String read_line(unsigned int line) {
@@ -120,7 +138,7 @@ class Storage {
   }
 
   // is the SD card ejected? Returns TRUE if ejected, FALSE if not
-  bool detect_eject() {
+  bool is_ejected() {
     currentState = digitalRead(this -> CHECK_PIN);
 
     // If the switch/button changed, due to noise or pressing:
@@ -150,7 +168,19 @@ class Storage {
 
 };
 
-// the SD card object
+void get_reading(SpectrumInfo *info, int int_time = 64, int frame_avg = 3, bool ae = false) {
+  // wakeup the sensor if sleeping
+  nsp32.Wakeup();
+  nsp32.AcqSpectrum(0, int_time, frame_avg, ae); // sensor_id = 0, integration time = 64; frame avg num = 3; autoexposure = false
+  while (nsp32.GetReturnPacketSize() <= 0) {
+    nsp32.UpdateStatus(); // call UpdateStatus() to check async result
+  }
+  nsp32.ExtractSpectrumInfo(info); // now we have all spectrum info in infoW, we can use e.g. "infoS.Spectrum" to access the spectrum data array
+  // put NSP back to sleep
+  nsp32.Standby(0);
+}
+
+// Define the SD card object
 Storage st(SD_CS_PIN, SD_EJECT_DETECT_PIN, LOG_FILENAME);
 
 void setup() {
@@ -159,7 +189,7 @@ void setup() {
   pinMode(7, OUTPUT); // LED output
   pinMode(13, INPUT_PULLUP); // pushbutton
 
-  digitalWrite(7, LOW); // write LED
+  digitalWrite(7, HIGH); // write LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for falling edge
 
   // initialize serial port for "Serial Monitor"
@@ -178,70 +208,68 @@ void setup() {
 
   // initialize NSP32
   nsp32.Init();
+  digitalWrite(7, LOW); // turn off the LED indicating program setup successfully.
 
 }
 
 void loop() {
-  nsp32.Wakeup();
-  // Get and extract spectrum data
-  nsp32.AcqSpectrum(0, 64, 3, false); // integration time = 64; frame avg num = 3; disable AE
 
-  // "AcqSpectrum" command takes longer time to execute, the return packet is not immediately available
-  // when the acquisition is done, a "ready trigger" will fire, and nsp32.GetReturnPacketSize() will be > 0
-  while (nsp32.GetReturnPacketSize() <= 0) {
-    // TODO: can go to sleep, and wakeup when "ready trigger" interrupt occurs
-    delay(100); // wait 100 ms in between waiting for spectrum data to return
-    nsp32.UpdateStatus(); // call UpdateStatus() to check async result
-  }
+  // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
+  for (int i = 1; i <= 1200; i += 5) {
+    SpectrumInfo infoS; // for storing the data reading into this
+    // format each line of CSV file into this line
+    String line = "";
 
-  SpectrumInfo infoS;
-  nsp32.ExtractSpectrumInfo( & infoS); // now we have all spectrum info in infoW, we can use e.g. "infoS.Spectrum" to access the spectrum data array
-  String line = "";
-
-  // write the line
-  // first put in the time
-  line.concat("NA");
-  line.concat(",");
-  // Then put in the isSaturated flag
-  line.concat(String(infoS.IsSaturated));
-  line.concat(",");
-  // Then put in the CIE1931 coords
-  line.concat(String(infoS.X));
-  line.concat(",");
-  line.concat(String(infoS.Y));
-  line.concat(",");
-  line.concat(String(infoS.Z));
-  line.concat(",");
-   
-  // Then put in the spectrum data
-  for (int i = 0; i < infoS.NumOfPoints; i++) {
-    //Serial.println(sizeof(infoS.Spectrum[i]));
-    line.concat(String(infoS.Spectrum[i], 18)); // write with 18 digits (precise)
-    //Serial.println(String(infoS.Spectrum[i], 18));
+    
+    // take the measurement
+    get_reading(&infoS, i, 3, false);
+  
+  
+  
+    // write the line
+    // first put in the time
+    line.concat("N/A");
     line.concat(",");
+    
+    // Then put in the integration time used
+    line.concat(String(infoS.IntegrationTime));
+    line.concat(",");
+    
+    // Then put in the isSaturated flag
+    line.concat(String(infoS.IsSaturated));
+    line.concat(",");
+    
+    // Then put in the CIE1931 coords
+    line.concat(String(infoS.X));
+    line.concat(",");
+    line.concat(String(infoS.Y));
+    line.concat(",");
+    line.concat(String(infoS.Z));
+    line.concat(",");
+     
+    // Then put in the spectrum data
+    for (int i = 0; i < infoS.NumOfPoints; i++) {
+      line.concat(String(infoS.Spectrum[i], 18)); // write with 18 digits (precise)
+      line.concat(",");
+    }
+    Serial.println(line);
+    write_to_sd(&line); // write the data to the SD card
+    
   }
 
-  Serial.println(line);
-  write_to_sd(line); // write the data to the SD card
-
-  // wait 10 seconds if running on auto mode
-  nsp32.Standby(0);
-  delay(1000 * 10);
+  exit(0);
   
 }
 
-void write_to_sd(String line) {
+
+
+void write_to_sd(String *line) {
   // turn on the LED to indicate writing
-  Serial.println("writing...");
-  digitalWrite(7, HIGH);
   st.open_file();
   delay(100);
   st.write_line(line);
   delay(100);
   st.close_file();
-  digitalWrite(7, LOW);
-  Serial.println("finished...");
-
 }
 
 void PinReadyTriggerISR() {
