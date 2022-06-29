@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "INT.CSV"            // the log filename on the SD
+#define LOG_FILENAME "INT1.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -185,7 +185,8 @@ void setup() {
 void loop() {
 
   // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
-  
+
+  for (int b = 0; b <= 1; b++) {
   for (int a = 1; a <= 3; a++) {
   for (int i = 1; i <= 1200; i += 5) {
     SpectrumInfo infoS; // for storing the data reading into this
@@ -193,15 +194,14 @@ void loop() {
     String line = "";
 
     int frame_avg = a;
-    bool ae = false;
+    bool ae = (b == 0) ? false : true;
     
     // take the measurement
     get_reading(&infoS, i, frame_avg, ae);
     
-  
     // write the line
     // first put in the date
-    line.concat(myDate);
+    line.concat("0");
     line.concat(",");
 
     // then put in the time
@@ -255,6 +255,7 @@ void loop() {
     write_to_sd(&line); // write the data to the SD card
 
     
+  }
   }
   }
 
