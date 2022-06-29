@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "INT1.CSV"            // the log filename on the SD
+#define LOG_FILENAME "INT.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -148,8 +148,7 @@ void get_reading(SpectrumInfo *info, int int_time = 64, int frame_avg = 3, bool 
     nsp32.UpdateStatus(); // call UpdateStatus() to check async result
   }
   nsp32.ExtractSpectrumInfo(info); // now we have all spectrum info in infoW, we can use e.g. "infoS.Spectrum" to access the spectrum data array
-  // put NSP back to sleep
-  //nsp32.Standby(0);
+
 }
 
 // Define the SD card object
@@ -180,36 +179,43 @@ void setup() {
 
   // initialize NSP32
   nsp32.Init();
-  delay(500);
-  nsp32.Standby(0);
-  delay(500);
-  nsp32.Wakeup();
   digitalWrite(7, LOW); // turn off the LED indicating program setup successfully.
-
 }
 
 void loop() {
 
   // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
+  
+  for (int a = 1; a <= 3; a++) {
   for (int i = 1; i <= 1200; i += 5) {
     SpectrumInfo infoS; // for storing the data reading into this
     // format each line of CSV file into this line
     String line = "";
 
-    int frame_avg = 1;
+    int frame_avg = a;
     bool ae = false;
     
     // take the measurement
-    get_reading(&infoS, i, 3, false);
-  
+    get_reading(&infoS, i, frame_avg, ae);
+    
   
     // write the line
     // first put in the date
-    line.concat("N/A");
+    line.concat(myDate);
     line.concat(",");
 
     // then put in the time
-    line.concat("N/A");
+
+    unsigned long ms = millis();
+    int seconds = (ms / 1000) % 60 ;
+    int minutes = ((ms / (1000*60)) % 60);
+    int hours   = ((ms / (1000*60*60)) % 24);
+    
+    line.concat(String(hours));
+    line.concat(":");
+    line.concat(String(minutes));
+    line.concat(":");
+    line.concat(String(seconds));
     line.concat(",");
     
     // Then put in the integration time used
@@ -241,13 +247,26 @@ void loop() {
       line.concat(String(infoS.Spectrum[j], 18)); // write with 18 digits (precise)
       line.concat(",");
     }
+
+    // Standby seems to clear SpectrumInfo, therefore call it after processing the data
+    nsp32.Standby(0);
     
     Serial.println(line);
     write_to_sd(&line); // write the data to the SD card
+
     
+  }
   }
 
   exit(0);
+  
+}
+
+void update_time() {
+  
+}
+
+void parse_time() {
   
 }
 
@@ -256,9 +275,7 @@ void loop() {
 void write_to_sd(String *line) {
   // turn on the LED to indicate writing
   st.open_file();
-  delay(100);
   st.write_line(line);
-  delay(100);
   st.close_file();
 }
 
