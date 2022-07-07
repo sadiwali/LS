@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "INT2.CSV"            // the log filename on the SD
+#define LOG_FILENAME "COS1.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -45,6 +45,8 @@ const unsigned int PinReady = NSP_READY;  // pin Ready
 // DATE TIME
 String myTime = __TIME__;
 String myDate = __DATE__;
+
+bool pressed = false;
 
 ArduinoAdaptor adaptor(PinRst);               // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi);   // NSP32 (using SPI channel)
@@ -158,7 +160,7 @@ void setup() {
   // initialize "ready trigger" pin for accepting external interrupt (falling edge trigger)
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
   pinMode(7, OUTPUT); // LED output
-  //pinMode(13, INPUT_PULLUP); // pushbutton
+  pinMode(13, INPUT_PULLUP); // pushbutton
 
   digitalWrite(7, HIGH); // write LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for falling edge
@@ -166,7 +168,7 @@ void setup() {
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
   //while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
-  Serial.println("START");
+  Serial.println("START. Waiting..");
 
   // attempt to initialize the SD
   while (true) {
@@ -179,26 +181,30 @@ void setup() {
 
   // initialize NSP32
   nsp32.Init();
+  nsp32.Standby(0);
+  //delay(10000); // wait 10 seconds to start
   digitalWrite(7, LOW); // turn off the LED indicating program setup successfully.
 }
 
 void loop() {
 
-  // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
 
-  for (int b = 0; b <= 1; b++) {
-  for (int a = 1; a <= 3; a++) {
-  for (int i = 0; i <= 1200; i += 5) {
-    if (i == 0) continue;
+ if (digitalRead(13) == LOW && pressed == false) {
+    pressed = true;
+    delay(5000); // wait 5 seconds
+    
+  // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
+  
     SpectrumInfo infoS; // for storing the data reading into this
     // format each line of CSV file into this line
     String line = "";
 
-    int frame_avg = a;
-    bool ae = (b == 0) ? false : true;
+    int frame_avg = 3;
+    int int_time = 0;
+    bool ae = true;
     
     // take the measurement
-    get_reading(&infoS, i, frame_avg, ae);
+    get_reading(&infoS, int_time, frame_avg, ae);
     
     // write the line
     // first put in the date
@@ -256,15 +262,16 @@ void loop() {
     write_to_sd(&line); // write the data to the SD card
     // sleep for a quarter of a second
     delay(250);
+ }
 
-    
-  }
-  }
-  }
-
-  exit(0);
+      // for help with pushbutton detection
+    if (digitalRead(13) == HIGH) {
+      pressed = false;
+    }
   
 }
+
+
 
 void write_to_sd(String *line) {
   // turn on the LED to indicate writing
