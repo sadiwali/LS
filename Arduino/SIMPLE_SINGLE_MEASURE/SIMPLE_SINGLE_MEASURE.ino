@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "COS1.CSV"            // the log filename on the SD
+#define LOG_FILENAME "COS9.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -191,7 +191,7 @@ void loop() {
 
  if (digitalRead(13) == LOW && pressed == false) {
     pressed = true;
-    delay(5000); // wait 5 seconds
+    delay(2000); // wait 2 seconds
     
   // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
   
