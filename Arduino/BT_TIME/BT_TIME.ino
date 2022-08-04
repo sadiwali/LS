@@ -1,106 +1,95 @@
-/*********************************************************************
- This is an example for our nRF52 based Bluefruit LE modules
-
- Pick one up today in the adafruit shop!
-
- Adafruit invests time and resources providing this open source code,
- please support Adafruit and open-source hardware by purchasing
- products from Adafruit!
-
- MIT license, check LICENSE for more information
- All text above, and the splash screen below must be included in
- any redistribution
-*********************************************************************/
+/* BLE Example for SparkFun Pro nRF52840 Mini 
+ *  
+ *  This example demonstrates how to use the Bluefruit
+ *  library to both send and receive data to the
+ *  nRF52840 via BLE.
+ *  
+ *  Using a BLE development app like Nordic's nRF Connect
+ *  https://www.nordicsemi.com/eng/Products/Nordic-mobile-Apps/nRF-Connect-for-Mobile
+ *  The BLE UART service can be written to to turn the
+ *  on-board LED on/off, or read from to monitor the 
+ *  status of the button.
+ *  
+ *  See the tutorial for more information:
+ *  https://learn.sparkfun.com/tutorials/nrf52840-development-with-arduino-and-circuitpython#arduino-examples  
+*/
 #include <bluefruit.h>
 
-// Beacon uses the Manufacturer Specific Data field in the advertising
-// packet, which means you must provide a valid Manufacturer ID. Update
-// the field below to an appropriate value. For a list of valid IDs see:
-// https://www.bluetooth.com/specifications/assigned-numbers/company-identifiers
-// 0x004C is Apple
-// 0x0822 is Adafruit
-// 0x0059 is Nordic
-#define MANUFACTURER_ID   0x0059
+BLEUart bleuart; // uart over ble
 
-// "nRF Connect" app can be used to detect beacon
-uint8_t beaconUuid[16] =
-{
-  0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78,
-  0x89, 0x9a, 0xab, 0xbc, 0xcd, 0xde, 0xef, 0xf0
-};
+// Define hardware: LED and Button pins and states
+const int LED_PIN = 7;
+#define LED_OFF LOW
+#define LED_ON HIGH
 
-// A valid Beacon packet consists of the following information:
-// UUID, Major, Minor, RSSI @ 1M
-BLEBeacon beacon(beaconUuid, 0x0102, 0x0304, -54);
+const int BUTTON_PIN = 13;
+#define BUTTON_ACTIVE LOW
+int lastButtonState = -1;
 
-void setup() 
-{
-  Serial.begin(115200);
+void setup() {
+  // Initialize hardware:
+  Serial.begin(115200); // Serial is the USB serial port
+  pinMode(LED_PIN, OUTPUT); // Turn on-board blue LED off
+  digitalWrite(LED_PIN, LED_OFF);
+  pinMode(BUTTON_PIN, INPUT);
 
-  // Uncomment to blocking wait for Serial connection
-  // while ( !Serial ) delay(10);
+  // Uncomment the code below to disable sharing
+  // the connection LED on pin 7.
+  //Bluefruit.autoConnLed(false);
 
-  Serial.println("Bluefruit52 Beacon Example");
-  Serial.println("--------------------------\n");
-
+  // Initialize Bluetooth:
   Bluefruit.begin();
+  // Set max power. Accepted values are: -40, -30, -20, -16, -12, -8, -4, 0, 4
+  Bluefruit.setTxPower(-20);
+  Bluefruit.setName("NL Sensor");
+  bleuart.begin();
 
-  // off Blue LED for lowest power consumption
-  Bluefruit.autoConnLed(false);
-  Bluefruit.setTxPower(0);    // Check bluefruit.h for supported values
-
-  // Manufacturer ID is required for Manufacturer Specific Data
-  beacon.setManufacturer(MANUFACTURER_ID);
-
-  // Setup the advertising packet
-  startAdv();
-
-  Serial.println("Broadcasting beacon, open your beacon app to test");
-
-  // Suspend Loop() to save power, since we didn't have any code there
-  suspendLoop();
-}
-
-void startAdv(void)
-{  
-  // Advertising packet
-  // Set the beacon payload using the BLEBeacon class populated
-  // earlier in this example
-  Bluefruit.Advertising.setBeacon(beacon);
-
-  // Secondary Scan Response packet (optional)
-  // Since there is no room for 'Name' in Advertising packet
+  // Start advertising device and bleuart services
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addTxPower();
+  Bluefruit.Advertising.addService(bleuart);
   Bluefruit.ScanResponse.addName();
-  Bluefruit.setName("NL SENSOR");
 
-  // create characteristic for time
-//  BLEService myService = BLEService("f26df6fe-7684-459b-908f-e98a32db8613");
-//  myService.begin();
-//  BLECharacteristic latestTime = BLECharacteristic("afb6d963-3404-4868-9df0-008ca3cfca3f");
-//  latestTime.setProperties(CHR_PROPS_WRITE);
-//  latestTime.setPermission(SECMODE_OPEN, SECMODE_OPEN);
-//  latestTime.setFixedLen(10);
-//  latestTime.begin();
-//
-//  Bluefruit.Advertising.addService(myService);
-//  
-  /* Start Advertising
-   * - Enable auto advertising if disconnected
-   * - Timeout for fast mode is 30 seconds
-   * - Start(timeout) with timeout = 0 will advertise forever (until connected)
-   * 
-   * Apple Beacon specs
-   * - Type: Non connectable, undirected
-   * - Fixed interval: 100 ms -> fast = slow = 100 ms
-   */
-  //Bluefruit.Advertising.setType(BLE_GAP_ADV_TYPE_ADV_NONCONN_IND);
   Bluefruit.Advertising.restartOnDisconnect(true);
-  Bluefruit.Advertising.setInterval(160, 160);    // in unit of 0.625 ms
-  Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
-  Bluefruit.Advertising.start(120);                // 0 = Don't stop advertising after n seconds  
+  // Set advertising interval (in unit of 0.625ms):
+  Bluefruit.Advertising.setInterval(32, 244);
+  // number of seconds in fast mode:
+  Bluefruit.Advertising.setFastTimeout(30);
+  Bluefruit.Advertising.start(0);  
 }
 
-void loop() 
-{
-  // loop is already suspended, CPU will not run loop() at all
+void loop() {
+  // If data has come in via BLE:
+  if (bleuart.available()) {
+    uint8_t c;
+    // use bleuart.read() to read a character sent over BLE
+    c = (uint8_t) bleuart.read();
+    // Print out the character for debug purposes:
+    Serial.write(c);
+
+    // If the character is one of our expected values,
+    // do something:
+    switch (c) {
+      // 0 number or character, turn the LED off:
+      case 0:
+      case '0':
+        digitalWrite(LED_PIN, LED_OFF);
+        break;
+      // 1 number or character, turn the LED on:
+      case 1:
+      case '1':
+        digitalWrite(LED_PIN, LED_ON);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // If our button state has changed:
+  int buttonState = digitalRead(BUTTON_PIN);
+  if (buttonState != lastButtonState) {
+    lastButtonState = buttonState;
+    // Write the new button state to the bleuart TX char
+    bleuart.write(!buttonState);
+  }
 }
