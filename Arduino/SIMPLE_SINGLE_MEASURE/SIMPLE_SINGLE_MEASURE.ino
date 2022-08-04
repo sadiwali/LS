@@ -21,10 +21,10 @@
  *               Pin
  * ------------------------------------
  * SPI SSEL      CS           22
- * CARD DETECT   CD           5
  */
 
 #include <ArduinoAdaptor.h>
+#include "Adafruit_TinyUSB.h"
 #include <NSP32.h>
 #include <SPI.h>
 #include <SD.h>
@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "COS9.CSV"            // the log filename on the SD
+#define LOG_FILENAME "C9.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -58,19 +58,16 @@ class Storage {
     String log_file_name;     // file name and directory to save the CSV data log to
     File log_file;            // the file variable that holds the log file
     int CS_PIN;               // the SPI chip select pin
-    int CHECK_PIN;            // SD card eject detection pin (HIGH when ejected, LOW when inserted)
     bool ERR = false;         // was there an error with the Storage class?
 
   public:
-    Storage(int CS, int check_pin, String filename) {
+    Storage(int CS, String filename) {
       /* Given the chip select (CS), and the detection pin (CHECK_PIN), load and open the log file to write to. */
       this -> CS_PIN = CS;                // the chip select pin
-      this -> CHECK_PIN = check_pin;      // for checking SD card ejection (not implemented)
       this -> log_file_name = filename;   // log file name and directory
     }
 
   void init() {
-    pinMode(this -> CHECK_PIN, INPUT_PULLUP);
     if (!SD.begin(this -> CS_PIN)) {
       // unable to open SD card
       this -> ERR = true;
@@ -154,7 +151,7 @@ void get_reading(SpectrumInfo *info, int int_time = 64, int frame_avg = 3, bool 
 }
 
 // Define the SD card object
-Storage st(SD_CS_PIN, 5, LOG_FILENAME);
+Storage st(SD_CS_PIN, LOG_FILENAME);
 
 void setup() {
   // initialize "ready trigger" pin for accepting external interrupt (falling edge trigger)
@@ -164,20 +161,24 @@ void setup() {
 
   digitalWrite(7, HIGH); // write LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for falling edge
-
+  
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
   //while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
   Serial.println("START. Waiting..");
-
+  
   // attempt to initialize the SD
   while (true) {
     // initialize SD
     st.init();
     if (!st.is_errored()) {
       break;
+    } else {
+      Serial.println("SD errored");
     }
   }
+  
+  Serial.println("SD INITIALIZED");
 
   // initialize NSP32
   nsp32.Init();
@@ -191,7 +192,8 @@ void loop() {
 
  if (digitalRead(13) == LOW && pressed == false) {
     pressed = true;
-    delay(2000); // wait 2 seconds
+    delay(1000); // wait 2 seconds
+    Serial.println("Recording a data point...");
     
   // min integration is 1, max is 1200. In ms, it is a little less than double the value passed to the function
   
