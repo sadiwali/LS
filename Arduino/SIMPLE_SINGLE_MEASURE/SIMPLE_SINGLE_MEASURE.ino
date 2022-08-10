@@ -1,8 +1,7 @@
 /**
- * Sadi Wali June 2022 for Alstan Jakubiec
+ * Sadi Wali June 2022
  * 
- * This program records spectrum data with a range of integration times, with varying frame average,
- * with and without autoexposure enabled to test the data collection capabilities of the NSP32.
+ * This program 
  * 
  * Pin layout used:
  * ------------------------------------
