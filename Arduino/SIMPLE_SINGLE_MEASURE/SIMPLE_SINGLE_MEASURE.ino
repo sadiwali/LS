@@ -32,10 +32,10 @@ using namespace NanoLambdaNSP32;
 
 
 // CONSTANTS
-#define SD_CS_PIN 22                      // pin connected to SD CS
+#define SD_CS_PIN 4                      // pin connected to SD CS
 #define LOG_FILENAME "C9.CSV"            // the log filename on the SD
-#define NSP_RESET 19                      // NSP reset pin
-#define NSP_READY 23                      // NSP ready pin
+#define NSP_RESET 28                      // NSP reset pin
+#define NSP_READY 29                      // NSP ready pin
 
 // PINS
 const unsigned int PinRst = NSP_RESET;    // pin Reset
@@ -163,7 +163,7 @@ void setup() {
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  //while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
+  while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
   Serial.println("START. Waiting..");
   
   // attempt to initialize the SD

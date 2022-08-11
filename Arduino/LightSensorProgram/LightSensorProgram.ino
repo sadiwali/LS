@@ -11,17 +11,17 @@
  * SPI                      nRF52840     
  * Signal        Pin          Pin        
  * ------------------------------------
- * Wakeup/Reset  RST          19    
+ * Wakeup/Reset  RST          28    
  * SPI SSEL      SS           21    
  * SPI MOSI      MOSI         3    
  * SPI MISO      MISO         31  
  * SPI SCK       SCK          30   
- * Ready         Ready        20
+ * Ready         Ready        29
  * ------------------------------------
  *               SD Card
  *               Pin
  * ------------------------------------
- * SPI SSEL      CS           22
+ * SPI SSEL      CS           4
  */
 
 #include <ArduinoAdaptor.h>
@@ -34,18 +34,18 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define LOG_FILENAME          "LOG1.CSV"           // the log filename to write to
-#define CAPTURE_INTERVAL      60                   // how frequently to capture data in seconds
-#define MIN_WAVELENGTH        360                  // the minimum wavelength we are interested in
-#define MAX_WAVELENGTH        780                  // the maximum wavelength we are interested in
+#define CAPTURE_INTERVAL      5                   // how frequently to capture data in seconds
+#define MIN_WAVELENGTH        340                  // the minimum wavelength we are interested in
+#define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
 #define SENSOR_MIN_WAVELENGTH 340                  // the minimum sensing wavelength (for W1 sensor)
 #define SENSOR_MAX_WAVELENGTH 1010                 // the maximum sensing wavelength  (for W1 sensor)
 #define WAVELENGTH_STEPSIZE   5                    // the sensor wavelength resolution (5 nm)
 #define CAPTURE_PRECISION     18                   // how many digits of precision to write (18 digits)
 
 // PINS
-#define SD_CS_PIN             22                   // pin connected to SD CS
-#define NSP_RESET             19                   // NSP reset pin
-#define NSP_READY             23                   // NSP ready pin
+#define SD_CS_PIN             4                   // pin connected to SD CS
+#define NSP_RESET             28                   // NSP reset pin
+#define NSP_READY             29                   // NSP ready pin
 const unsigned int PinRst = NSP_RESET;             // pin Reset
 const unsigned int PinReady = NSP_READY;           // pin Ready
 
