@@ -9,17 +9,17 @@
  * SPI                      nRF52840     
  * Signal        Pin          Pin        
  * ------------------------------------
- * Wakeup/Reset  RST          19    
- * SPI SSEL      SS           21    
+ * Wakeup/Reset  RST          29    
+ * SPI SSEL      SS           5    
  * SPI MOSI      MOSI         3    
  * SPI MISO      MISO         31  
  * SPI SCK       SCK          30   
- * Ready         Ready        20
+ * Ready         Ready        28
  * ------------------------------------
  *               SD Card
  *               Pin
  * ------------------------------------
- * SPI SSEL      CS           22
+ * SPI SSEL      CS           4
  */
 
 #include <ArduinoAdaptor.h>
@@ -182,7 +182,7 @@ void setup() {
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
-  //delay(10000); // wait 10 seconds to start
+  
   digitalWrite(7, LOW); // turn off the LED indicating program setup successfully.
 }
 
