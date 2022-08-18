@@ -34,7 +34,7 @@ using namespace NanoLambdaNSP32;
 
 // CONSTANTS
 #define SD_CS_PIN 22                      // pin connected to SD CS
-#define LOG_FILENAME "INT2.CSV"            // the log filename on the SD
+#define LOG_FILENAME "INT1.CSV"            // the log filename on the SD
 #define NSP_RESET 19                      // NSP reset pin
 #define NSP_READY 23                      // NSP ready pin
 
@@ -165,7 +165,7 @@ void setup() {
 
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  //while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
+  while (!Serial);                    // wait for serial if prints inside setup function are important (this will hang the MCU until plugged into serial monitor)
   Serial.println("START");
 
   // attempt to initialize the SD
@@ -188,8 +188,7 @@ void loop() {
 
   for (int b = 0; b <= 1; b++) {
   for (int a = 1; a <= 3; a++) {
-  for (int i = 0; i <= 1200; i += 5) {
-    if (i == 0) continue;
+  for (int i = 1; i <= 1200; i += 5) {
     SpectrumInfo infoS; // for storing the data reading into this
     // format each line of CSV file into this line
     String line = "";
@@ -254,8 +253,6 @@ void loop() {
     
     Serial.println(line);
     write_to_sd(&line); // write the data to the SD card
-    // sleep for a quarter of a second
-    delay(250);
 
     
   }
