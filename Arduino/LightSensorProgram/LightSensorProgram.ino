@@ -32,12 +32,13 @@
 #include <NSP32.h>                                 // for high-level interfacing with the NSP module
 #include <SPI.h>                                   // Arduino SPI 
 #include <SD.h>                                    // Arduino SD
-//#include <TimeLib.h>                              // Date and time
+#include <bluefruit.h>                             // Bluetooth
+#include <TimeLib.h>                              // Date and time
 
 using namespace NanoLambdaNSP32;
 
 // CONSTANTS
-#define LOG_FILENAME          "myfile.csv"           // the log filename to write to
+#define LOG_FILENAME          "LOG1.CSV"           // the log filename to write to
 #define CAPTURE_INTERVAL      5000                 // how frequently to capture data in ms
 #define MIN_WAVELENGTH        340                  // the minimum wavelength we are interested in
 #define MAX_WAVELENGTH        1010                 // the maximum wavelength we are interested in
@@ -45,7 +46,7 @@ using namespace NanoLambdaNSP32;
 #define SENSOR_MAX_WAVELENGTH 1010                 // the maximum sensing wavelength  (for W1 sensor)
 #define WAVELENGTH_STEPSIZE   5                    // the sensor wavelength resolution (5 nm)
 #define CAPTURE_PRECISION     18                   // how many digits of precision to write (18 digits)
-
+#define BT_TIMEOUT            1000 * 60            // how long to advertise for synchronizing time in ms
 
 // PINS
 #define SD_CS_PIN             4                    // pin connected to SD CS
@@ -55,6 +56,15 @@ using namespace NanoLambdaNSP32;
 const unsigned int PinRst = NSP_RESET;             // pin Reset
 const unsigned int PinSS = NSP_CS_PIN;             // NSP chip select pin
 const unsigned int PinReady = NSP_READY;           // pin Ready
+
+// DATE TIME
+String myTime = "HHMMSS";                          // the starting time
+String myDate = "YYYYMMDD";                        // the starting date
+time_t cTime = now();
+bool time_set = false;                             // has the time been set?
+
+// BLE
+BLEUart bleuart; // uart over ble
 
 // NSP32m
 ArduinoAdaptor adaptor(PinRst, PinSS);             // master MCU adaptor
@@ -81,16 +91,13 @@ class Storage {
         this -> ERR = true;
         return;
       }
-      Serial.println("SD card initialized.");
     }
 
     /* Once the SD card reader is initialized, attempt to open the log file */
     void open_file() {
       // attempt to open SD card for writing
-      while (this->log_file == false) {
-        Serial.println("SD attempting to open file");
+      while (!this->log_file) {
         this->log_file = SD.open(this -> log_file_name, FILE_WRITE);
-        delay(2000);
       }
   
       // file opened, check if new file
@@ -115,13 +122,9 @@ class Storage {
   
     /* Write a line to the SD file */
     void write_line(String *line) {
-      Serial.print("Opening file... ");
       this->open_file();
-      Serial.print("File open. Writing line... ");
       this->log_file.println(*line);
-      Serial.print("Line written. Closing file... ");
       this->close_file();
-      Serial.println("File closed.");
     }
   
     /* Read a line given line number from the SD file */
@@ -156,6 +159,11 @@ class Storage {
 
 // Define the SD card object
 Storage st(SD_CS_PIN, LOG_FILENAME);
+
+/*  Returns: the current date and time in the following format 'YYYY/MM/DD HH:MM:SS' */
+String get_current_datetime() {
+  return "";
+}
 
 /* Get a reading from the NSP32 sensor */
 void get_reading(SpectrumInfo *info, int int_time = 0, int frame_avg = 3, bool ae = true) {
@@ -257,6 +265,29 @@ void take_measurement(bool manual_measurement=false) {
   st.write_line(&line); 
 }
 
+void setup_bt() {
+  // Initialize Bluetooth:
+  Bluefruit.begin();
+  // Set power. Accepted values are: -40, -30, -20, -16, -12, -8, -4, 0, 4
+  Bluefruit.setTxPower(-20);
+  Bluefruit.setName("NL Sensor");
+  bleuart.begin();
+
+  // Start advertising device and bleuart services
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addTxPower();
+  Bluefruit.Advertising.addService(bleuart);
+  Bluefruit.ScanResponse.addName();
+
+   Bluefruit.Advertising.restartOnDisconnect(true);
+  // Set advertising interval (in unit of 0.625ms):
+  Bluefruit.Advertising.setInterval(32, 244);
+  // number of seconds in fast mode:
+  Bluefruit.Advertising.setFastTimeout(30);
+  Bluefruit.Advertising.start(BT_TIMEOUT);  
+}
+
+
 void setup() {
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
   pinMode(7, OUTPUT); // onboard LED output
@@ -268,7 +299,7 @@ void setup() {
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
+  //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
   Serial.println("PROGRAM START. Attempting to initialize SD card...");
   
   // attempt to initialize the SD
@@ -290,9 +321,12 @@ void setup() {
   nsp32.Standby(0);
   Serial.println("NSP32 INITIALIZED.");
   
-  // wait for datetime to be sent over serial
+  // start the BT TIME script
+  // advertise on bluetooth for 5 minutes to sync time
   // time will be set using a string: DTYYYYMMDDHHMMSS
-  //
+  setup_bt();
+
+  // time not received after 5 minutes, shut down, try again next power on
 
   
   // turn off the LED indicating program setup successfully.
@@ -308,46 +342,44 @@ void loop() {
   unsigned long record_start_ms = millis();
 
   // if datetime has not been set, loop to set time via BLE
-//  if (false) {
-//    // If data has come in via serial
-//    if (Serial.available() > 0) {
-//      int incomingByte = Serial.read();
-//      
-//      bt_buf[read_index] = incomingByte; // store the byte into buffer
-//      read_index++;
-//      
-//      // if buffer is full
-//      if (read_index >= 16) {
-//        
-//        // if contents are valid
-//        if (bt_buf[0] == 'D' && bt_buf[1] == 'T') {
-//          
-//          // first convert the buffer to a string
-//          String dt_string = bt_buf;
-//
-//          Serial.println(dt_string);
-//          
-//          int yr = dt_string.substring(2, 6).toInt();
-//          int mth = dt_string.substring(6, 8).toInt();
-//          int d = dt_string.substring(8, 10).toInt();
-//
-//          int hr = dt_string.substring(10, 12).toInt();
-//          int mn = dt_string.substring(12, 14).toInt();
-//          int sec = dt_string.substring(14, 16).toInt();
-//
-//          // set the time 
-//          setTime(hr, mn, sec, d, mth, yr);
-//          
-//          
-//        } else {
-//          // contents are not valid, clear the buffer and keep listening
-//          Serial.println("Attempted to set invalid datetime.");
-//        }
-//        // read new data into buffer
-//        read_index = 0;
-//      }
-//    }
-//  } else {
+  if (!time_set) {
+    // If data has come in via BLE:
+    if (bleuart.available()) {
+      char c;
+      c = (char) bleuart.read();
+      bt_buf[read_index] = c; // store the byte into buffer
+      read_index++;
+      
+      // if buffer is full
+      if (read_index >= 16) {
+        
+
+        
+        // if contents are valid
+        if (bt_buf[0] == 'D' && bt_buf[1] == 'T') {
+          // first convert the buffer to a string
+          String dt_string = bt_buf;
+          
+          int yr = dt_string.substring(2, 6).toInt();
+          int mth = dt_string.substring(6, 8).toInt();
+          int day = dt_string.substring(8, 10).toInt();
+
+          int hr = dt_string.substring(10, 12).toInt();
+          int mn = dt_string.substring(12, 14).toInt();
+          int sec = dt_string.substring(14, 16).toInt();
+
+          // set the time 
+          
+          
+        } else {
+          // contents are not valid, clear the buffer and keep listening
+          Serial.println("Attempted to set invalid datetime.");
+        }
+        // read new data into buffer
+        read_index = 0;
+      }
+    }
+  } else {
     
     // take and record the spectral measurement
     take_measurement(false);
@@ -357,7 +389,7 @@ void loop() {
   
     // sleep for some interval before capturing data again
     delay(CAPTURE_INTERVAL - collection_duration);
-//  }
+  }
 }
 
 /* NSP32m code */
