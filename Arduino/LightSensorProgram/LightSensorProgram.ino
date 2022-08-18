@@ -33,6 +33,7 @@
 #include <SPI.h>                                   // Arduino SPI 
 #include <SD.h>                                    // Arduino SD
 #include <bluefruit.h>                             // Bluetooth
+#include <TimeLib.h>                              // Date and time
 
 using namespace NanoLambdaNSP32;
 
@@ -53,13 +54,17 @@ using namespace NanoLambdaNSP32;
 #define NSP_RESET             28                   // NSP reset pin
 #define NSP_READY             29                   // NSP ready pin
 const unsigned int PinRst = NSP_RESET;             // pin Reset
-const unsigned int PinSS = NSP_CS_PIN;
+const unsigned int PinSS = NSP_CS_PIN;             // NSP chip select pin
 const unsigned int PinReady = NSP_READY;           // pin Ready
 
 // DATE TIME
-String myTime = "HHMMSS";
-String myDate = "YYYYMMDD";
+String myTime = "HHMMSS";                          // the starting time
+String myDate = "YYYYMMDD";                        // the starting date
+time_t cTime = now();
 bool time_set = false;                             // has the time been set?
+
+// BLE
+BLEUart bleuart; // uart over ble
 
 // NSP32m
 ArduinoAdaptor adaptor(PinRst, PinSS);             // master MCU adaptor
@@ -90,10 +95,9 @@ class Storage {
 
     /* Once the SD card reader is initialized, attempt to open the log file */
     void open_file() {
-      // attempt to open SD card for writing, waiting 2 seconds in between
+      // attempt to open SD card for writing
       while (!this->log_file) {
         this->log_file = SD.open(this -> log_file_name, FILE_WRITE);
-        delay(2000);
       }
   
       // file opened, check if new file
@@ -155,6 +159,11 @@ class Storage {
 
 // Define the SD card object
 Storage st(SD_CS_PIN, LOG_FILENAME);
+
+/*  Returns: the current date and time in the following format 'YYYY/MM/DD HH:MM:SS' */
+String get_current_datetime() {
+  return "";
+}
 
 /* Get a reading from the NSP32 sensor */
 void get_reading(SpectrumInfo *info, int int_time = 0, int frame_avg = 3, bool ae = true) {
@@ -280,14 +289,13 @@ void setup_bt() {
 
 
 void setup() {
-  // initialize "ready trigger" pin for accepting external interrupt (falling edge trigger)
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
-  pinMode(7, OUTPUT); // LED output
+  pinMode(7, OUTPUT); // onboard LED output
   pinMode(13, INPUT_PULLUP); // pushbutton pull-up input
 
   digitalWrite(7, HIGH); // turn LED ON
-  attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY falling edge
-  attachInterrupt(digitalPinToInterrupt(13), PushBtnTriggerISR, FALLING); // enable interrupt for pushbutton falling edge
+  attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
+  attachInterrupt(digitalPinToInterrupt(13), PushBtnTriggerISR, FALLING); // enable interrupt for pushbutton
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
@@ -302,7 +310,7 @@ void setup() {
     if (!st.is_errored()) {
       break;
     } else {
-      Serial.println("SD ERRORED");
+      Serial.println("Could not initialize SD card. Retrying...");
     }
   }
   
@@ -313,15 +321,10 @@ void setup() {
   nsp32.Standby(0);
   Serial.println("NSP32 INITIALIZED.");
   
-
-
   // start the BT TIME script
   // advertise on bluetooth for 5 minutes to sync time
   // time will be set using a string: DTYYYYMMDDHHMMSS
   setup_bt();
-  
-
-  // time received, continue program
 
   // time not received after 5 minutes, shut down, try again next power on
 
@@ -331,7 +334,7 @@ void setup() {
 }
 
 // the buffer to write date time into
-uint8_t bt_buf[16];
+char bt_buf[16];
 int read_index = 0;
 
 void loop() {
@@ -342,48 +345,51 @@ void loop() {
   if (!time_set) {
     // If data has come in via BLE:
     if (bleuart.available()) {
-      uint8_t c;
-      c = (uint8_t) bleuart.read();
+      char c;
+      c = (char) bleuart.read();
       bt_buf[read_index] = c; // store the byte into buffer
       read_index++;
+      
+      // if buffer is full
       if (read_index >= 16) {
-        // buffer overflow, verify buffer contents
-        if (bt_buf[0] == b'D' && bt_buf[1] == b'T') {
-          // contents are valid and full
-          int year = 
+        
+
+        
+        // if contents are valid
+        if (bt_buf[0] == 'D' && bt_buf[1] == 'T') {
+          // first convert the buffer to a string
+          String dt_string = bt_buf;
+          
+          int yr = dt_string.substring(2, 6).toInt();
+          int mth = dt_string.substring(6, 8).toInt();
+          int day = dt_string.substring(8, 10).toInt();
+
+          int hr = dt_string.substring(10, 12).toInt();
+          int mn = dt_string.substring(12, 14).toInt();
+          int sec = dt_string.substring(14, 16).toInt();
+
+          // set the time 
+          
+          
         } else {
           // contents are not valid, clear the buffer and keep listening
-          read_index = 0;
+          Serial.println("Attempted to set invalid datetime.");
         }
-      }
-  
-      // If the character is one of our expected values,
-      // do something:
-      switch (c) {
-        // 0 number or character, turn the LED off:
-        case 0:
-        case '0':
-          digitalWrite(LED_PIN, LED_OFF);
-          break;
-        // 1 number or character, turn the LED on:
-        case 1:
-        case '1':
-          digitalWrite(LED_PIN, LED_ON);
-          break;
-        default:
-          break;
+        // read new data into buffer
+        read_index = 0;
       }
     }
+  } else {
+    
+    // take and record the spectral measurement
+    take_measurement(false);
+    
+    // after the reading is done, calculate how long the data collection took to offset the sleep time
+    unsigned long collection_duration = millis() - record_start_ms;
+  
+    // sleep for some interval before capturing data again
+    delay(CAPTURE_INTERVAL - collection_duration);
   }
-  
-  // take and record the spectral measurement
-  take_measurement(false);
-  
-  // after the reading is done, calculate how long the data collection took to offset the sleep time
-  unsigned long collection_duration = millis() - record_start_ms;
-
-  // sleep for some interval before capturing data again
-  delay(CAPTURE_INTERVAL - collection_duration);
 }
 
 /* NSP32m code */
