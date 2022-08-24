@@ -40,7 +40,6 @@
 using namespace NanoLambdaNSP32;
 
 // DEBUG
-#define DO_PRINT              true
 #define NO_SAVE               true                  // do not save measurements (for debugging SD)
 #define BLUETOOTH             false
 
@@ -65,11 +64,15 @@ const unsigned int PinRst = NSP_RESET;              // pin Reset
 const unsigned int PinSS = NSP_CS_PIN;              // NSP chip select pin
 const unsigned int PinReady = NSP_READY;            // pin Ready
 
+// VARIABLES
 // DATE TIME
 String myTime = "HHMMSS";                           // the starting time
 String myDate = "YYYYMMDD";                         // the starting date
+int logging_interval = CAPTURE_INTERVAL;            // the data logging interval
 time_t cTime = now();
 bool time_set = false;                              // has the time been set?
+
+bool paused = false;                                // is data capture paused?
 
 
 // NSP32m
@@ -94,12 +97,11 @@ class Storage {
 
     /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
     void init() {
-    
+      // SD is not opened if NO_SAVE is true
       if (!NO_SAVE && !SD.begin(this -> CS_PIN) ) {
         // unable to open SD card, set error flag
         this -> ERR = true;
       }
-      //
     }
 
     /* Once the SD card reader is initialized, attempt to open the log file */
@@ -127,6 +129,10 @@ class Storage {
     /* Close the SD file */
     void close_file() {
       this->log_file.close();
+    }
+
+    void delete_file(String filename) {
+      SD.remove(filename);
     }
   
     /* Open the file, Write a line, then close the file. */
@@ -190,9 +196,8 @@ void get_reading(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae
 }
 
 /* Take a manual or automatic measurement. */
-void take_measurement(bool manual_measurement=false) {
+String take_measurement(bool manual_measurement=false) {
   digitalWrite(7, HIGH); // turn on LED
-  Serial.println("Recording a data point...");
   SpectrumInfo infoS; // variable for storing the spectrum data
   
   // format each line of CSV file into this line
@@ -258,14 +263,12 @@ void take_measurement(bool manual_measurement=false) {
 
   // Standby seems to clear SpectrumInfo, therefore call it after processing the data
   nsp32.Standby(0);
-  
-  // write line to Serial for debugging
-  Serial.println(line);
-  
+    
   // write the data to the SD card
   st.write_line(&line); 
 
   digitalWrite(7, LOW); // turn off LED
+  return line;
 }
 
 ///* Setup BLE */
@@ -303,10 +306,7 @@ void setup() {
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
-
-  // DEBUG prints
-  if (NO_SAVE) Serial.println("NO_SAVE");
+  //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
   
   Serial.println("PROGRAM START. Attempting to initialize SD card...");
   
@@ -334,62 +334,76 @@ void setup() {
   digitalWrite(7, LOW); 
 }
 
-// the buffer to write date time into
-char bt_buf[16];
+// the serial buffer and pointer
+char ser_buffer[32];
 int read_index = 0;
 
 /* Arduino loop function */
 void loop() {
-  // for sleep offsetting
-  unsigned long record_start_ms = millis();
-
-  // if datetime has not been set, loop to set time via BLE
-  // Format for time: "DTYYYYMMDDHHMMSS"
-  if (!time_set) {
-    // If data has come in via Serial
+  
+  if (Serial) {
+    // cable plugged in
     if (Serial.available() > 0) {
-      byte b;
-      char c;
-      b =  Serial.read();
-      c = (char) b;
-      Serial.print(b);
-      Serial.print(" ");
-      Serial.println(c);
-      bt_buf[read_index] = c; // store the byte into buffer
-      read_index++;
+      // data available
+      char c = (char) Serial.read();
+      bool end_of_line = false;
+      if (c != '\n') {
+        ser_buffer[read_index] = c;
+        read_index ++;
+      } else {
+        end_of_line = true;
+        ser_buffer[read_index] = '\0';
+      }
       
-      // if buffer is full or newline 
-      if (read_index >= 16 || c == '\n') {
-        
-        // if contents are valid
-        if (read_index.length == 16 && bt_buf[0] == 'D' && bt_buf[1] == 'T') {
-          // first convert the buffer to a string
-          String dt_string = bt_buf;
-          
-          int yr = dt_string.substring(2, 6).toInt();
-          int mth = dt_string.substring(6, 8).toInt();
-          int d = dt_string.substring(8, 10).toInt();
-
-          int hr = dt_string.substring(10, 12).toInt();
-          int mn = dt_string.substring(12, 14).toInt();
-          int sec = dt_string.substring(14, 16).toInt();
-
-          // set the time 
-          
-          Serial.println("TIME SET SUCCESSFULLY.");
-          time_set = true;
-        } else {
-          // contents are not valid, clear the buffer and keep listening
-          Serial.println("Attempted to set invalid datetime.");
-          Serial.println(read_index);
-        }
-        
-        // reset the read index
+      if (end_of_line || read_index >= sizeof(ser_buffer)/sizeof(char)) {
+        // end of line reached, or buffer has been filled, read the buffer
         read_index = 0;
+        // parse character array into string
+        String instruction = String(ser_buffer);
+
+        if (instruction == "ToggleDataCapture") {
+          // Toggle data capture while plugged in
+          blinkLed(2);
+          Serial.println("OK");
+        } else if (instruction == "ManualCapture") {
+          // collect a data point manually
+          String manual_data = take_measurement(true);
+          Serial.println("DATA");
+          Serial.println(manual_data);
+        } else if (instruction == "ExportData") {
+          // export all data line by line
+
+          // add the data export header
+          Serial.println(">DATA_EXPORT");
+          // how many lines to expect
+          Serial.println("0");
+          // print all lines of code
+          
+          blinkLed(4);
+        } else if (instruction == "DeleteAllData") {
+          // Delete the data logging file
+          st.delete_file(LOG_FILENAME);
+          Serial.println("LOG FILE DELETED");
+        } else if (instruction.indexOf("SetCollectionInterval" == 0)) {
+          // Set new collection interval
+          int new_logging_interval = instruction.substring(instruction.indexOf("_")+1).toInt();
+          logging_interval = new_logging_interval;
+        } else {
+          blinkLed(7);
+        }
       }
     }
-  } else {
+
+    // if the correct interval has passed, capture a data point unless paused.
     
+  
+  } else {
+    // cable not plugged in
+  
+    // for sleep offsetting
+    unsigned long record_start_ms = millis();
+    
+
     // take and record the spectral measurement
     take_measurement(false);
     
@@ -397,7 +411,18 @@ void loop() {
     unsigned long collection_duration = millis() - record_start_ms;
   
     // sleep for some interval before capturing data again
-    delay(CAPTURE_INTERVAL - collection_duration);
+    delay(logging_interval - collection_duration);
+    
+
+  }  
+}
+
+void blinkLed(int num) {
+  for (int i = 0; i < num; i++) {
+    digitalWrite(7, HIGH);
+    delay(500);
+    digitalWrite(7, LOW);
+    delay(250);
   }
 }
 
