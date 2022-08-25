@@ -70,7 +70,7 @@ String myDate = "YYYYMMDD";                         // the starting date
 int logging_interval = DEF_CAPTURE_INTERVAL;            // the data logging interval
 time_t cTime = now();
 bool time_set = false;                              // has the time been set?
-
+unsigned long data_counter = 0                      // how many data points have been collected this session?
 bool paused = false;                                // is data capture paused?
 
 
@@ -397,6 +397,8 @@ void loop() {
           
           setTime(h,m,s,d,mth,y);
           Serial.println("OK. Date set");
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
+          // 06: list number of entries
         } else {
           String instruction = String(ser_buffer);
           Serial.print("Err. ");
