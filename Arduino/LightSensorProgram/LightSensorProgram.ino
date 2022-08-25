@@ -44,7 +44,9 @@ using namespace NanoLambdaNSP32;
 #define BLUETOOTH             false
 
 // CONSTANTS
-#define LOG_FILENAME          "LOG1.CSV"            // the log filename to write to
+#define LOG_FILENAME          "LOG1"                // the log filename to write to
+#define METADATA_SUFFIX       "_metadata"           // the suffix to indicate metadata file
+#define LOG_FILE_EXT          ".CSV"                // the log file extension
 #define DEF_CAPTURE_INTERVAL  5000                  // how frequently to capture data in ms
 #define MIN_WAVELENGTH        340                   // the minimum wavelength we are interested in
 #define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
@@ -67,10 +69,10 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 // DATE TIME
 String myTime = "HHMMSS";                           // the starting time
 String myDate = "YYYYMMDD";                         // the starting date
-int logging_interval = DEF_CAPTURE_INTERVAL;            // the data logging interval
+int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
 time_t cTime = now();
 bool time_set = false;                              // has the time been set?
-unsigned long data_counter = 0                      // how many data points have been collected this session?
+unsigned long data_counter = 10;                     // how many data points have been collected this session?
 bool paused = false;                                // is data capture paused?
 
 
@@ -91,7 +93,7 @@ class Storage {
     Storage(int CS, String filename) {
       // set the chip select pin for SPI, and the log file name
       this -> CS_PIN = CS;                          
-      this -> log_file_name = filename;
+      this -> log_file_name = filename + LOG_FILE_EXT;
     }
 
     /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
@@ -100,6 +102,23 @@ class Storage {
       if (!NO_SAVE && !SD.begin(this -> CS_PIN) ) {
         // unable to open SD card, set error flag
         this -> ERR = true;
+        return;
+      }
+      
+      // open the metadata file and read data counter if it exists
+      String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
+      if (SD.exists(metadata_file_name)) {
+        File metadata_file = SD.open(metadata_file_name, FILE_READ);
+        
+        if (!metadata_file) {
+          this->ERR = true;
+          return;
+        }
+        
+        String line = metadata_file.readStringUntil('\n');
+        // read the integer into data_counter
+        data_counter = line.toInt();
+        metadata_file.close();
       }
     }
 
@@ -107,12 +126,12 @@ class Storage {
     void open_file() {
       // attempt to open SD card for writing
       while (!this->log_file) {
-        this->log_file = SD.open(this -> log_file_name, FILE_WRITE);
+        this->log_file = SD.open(this->log_file_name, FILE_WRITE);
       }
   
       // file opened, check if new file
       if (this->log_file.size() == 0) {
-        // brand new file, add header
+        // brand new file, add headers
         String line = "DATE,TIME,MANUAL,INT_TIME,FRAME_AVG,AE,IS_SATURATED,X,Y,Z,";
   
         // add the wavelengths to the header
@@ -130,16 +149,36 @@ class Storage {
       this->log_file.close();
     }
 
-    void delete_file(String filename) {
-      SD.remove(filename);
+    void delete_file(String filename = LOG_FILENAME) {
+      SD.remove(filename + LOG_FILE_EXT);
+      SD.remove(filename + METADATA_SUFFIX + LOG_FILE_EXT);
     }
   
     /* Open the file, Write a line, then close the file. */
     void write_line(String *line) {
+      data_counter++;
       if (NO_SAVE) return; // skip if no save flag is set
       this->open_file();
       this->log_file.println(*line);
+      
       this->close_file();
+
+      // open the metadata file and write counter to it
+      String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
+      if (SD.exists(metadata_file_name)) {
+        // delete the file before updating
+        SD.remove(metadata_file_name);
+      }
+      // create it brand new
+      File metadata_file = SD.open(metadata_file_name, FILE_WRITE);
+      
+      if (!metadata_file) {
+        this->ERR = true;
+        return;
+      }
+      
+      metadata_file.println(data_counter);
+      metadata_file.close();
     }
   
     /* Read a line given line number from the SD file */
@@ -209,7 +248,7 @@ String take_measurement(bool manual_measurement=false) {
   
   // pass in the settings, and take the reading from the NSP sensor
   get_reading(&infoS, int_time, frame_avg, ae);
-
+  
   // 1. Which date was this data point collected on?
   line.concat(String(day()));
   line.concat("/");
@@ -306,7 +345,7 @@ void setup() {
   digitalWrite(7, HIGH); // turn LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
   attachInterrupt(digitalPinToInterrupt(13), PushBtnTriggerISR, FALLING); // enable interrupt for pushbutton
-  
+  attachInterrupt(digitalPinToInterrupt(PIN_SERIAL_RX), SerialPlugIn, FALLING); // enable interrupt for serial
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
   //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
@@ -374,7 +413,7 @@ void loop() {
           
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
-          st.delete_file(LOG_FILENAME);
+          st.delete_file();
           Serial.println("OK. Log file deleted");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
@@ -399,6 +438,8 @@ void loop() {
           Serial.println("OK. Date set");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
           // 06: list number of entries
+          Serial.println("DATA");
+          Serial.println(data_counter);
         } else {
           String instruction = String(ser_buffer);
           Serial.print("Err. ");
@@ -425,6 +466,7 @@ void loop() {
   
     // sleep for some interval before capturing data again
     delay(logging_interval - collection_duration);
+
   }  
 }
 
@@ -445,5 +487,10 @@ void PinReadyTriggerISR() {
 
 /* Pushbutton interrupt. When the pushbutton is pressed, take a manual measurement. */
 void PushBtnTriggerISR() {
-  take_measurement(true);
+  //take_measurement(true);
+  blinkLed(2);
+}
+
+void SerialPlugIn() {
+  Serial.println("Hello");
 }
