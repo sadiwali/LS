@@ -309,9 +309,7 @@ void setup() {
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
-  
-  Serial.println("PROGRAM START. Attempting to initialize SD card...");
+  //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
   
   // attempt to initialize the SD
   while (true) {
@@ -321,16 +319,12 @@ void setup() {
     if (!st.is_errored()) {
       break;
     } else {
-      Serial.println("Could not initialize SD card. Retrying...");
     }
   }
   
-  Serial.println("SD INITIALIZED. Attempting to initialize NSP32...");
-
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
-  Serial.println("NSP32 INITIALIZED. Waiting for time sync...");
 
   // turn off the LED indicating program setup successfully.
   digitalWrite(7, LOW); 
@@ -363,7 +357,6 @@ void loop() {
 
         if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
           // 00: Toggle data capture while plugged in
-          blinkLed(2);
           Serial.println("OK. ToggleDataCapture");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
           // 01: collect a data point manually
@@ -374,16 +367,15 @@ void loop() {
           // 02: export all data line by line
 
           // add the data export header
-          Serial.println(">DATA_EXPORT");
+          Serial.println("DATA");
           // how many lines to expect
           Serial.println("0");
           // print all lines of code
           
-          blinkLed(4);
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
           st.delete_file(LOG_FILENAME);
-          Serial.println("LOG FILE DELETED");
+          Serial.println("OK. Log file deleted");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
           // create string with serial buffer
@@ -393,7 +385,6 @@ void loop() {
           Serial.println("OK. SetCollectionInterval");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
           // 05: Set date and time
-          
           String instruction = String(ser_buffer);
           
           int y = instruction.substring(2, 6).toInt();
@@ -403,26 +394,13 @@ void loop() {
           int h = instruction.substring(10, 12).toInt();
           int m = instruction.substring(12, 14).toInt();
           int s = instruction.substring(14, 16).toInt();
-
-          Serial.print(String(y));
-          Serial.print(" ");
-          Serial.print(String(mth));
-          Serial.print(" ");
-          Serial.print(String(d));
-          Serial.print(" ");
-          Serial.print(String(h));
-          Serial.print(" ");
-          Serial.print(String(m));
-          Serial.print(" ");
-          Serial.print(String(s));
-
+          
           setTime(h,m,s,d,mth,y);
-          Serial.println("OK. SetDateTime");
+          Serial.println("OK. Date set");
         } else {
           String instruction = String(ser_buffer);
-          Serial.print("Uncaught command: ");
+          Serial.print("Err. ");
           Serial.println(instruction);
-          blinkLed(7);
         }
       }
     }
