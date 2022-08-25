@@ -44,9 +44,8 @@ using namespace NanoLambdaNSP32;
 #define BLUETOOTH             false
 
 // CONSTANTS
-
 #define LOG_FILENAME          "LOG1.CSV"            // the log filename to write to
-#define CAPTURE_INTERVAL      5000                  // how frequently to capture data in ms
+#define DEF_CAPTURE_INTERVAL  5000                  // how frequently to capture data in ms
 #define MIN_WAVELENGTH        340                   // the minimum wavelength we are interested in
 #define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
 #define SENSOR_MIN_WAVELENGTH 340                   // the minimum sensing wavelength (for W1 sensor)
@@ -68,7 +67,7 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 // DATE TIME
 String myTime = "HHMMSS";                           // the starting time
 String myDate = "YYYYMMDD";                         // the starting date
-int logging_interval = CAPTURE_INTERVAL;            // the data logging interval
+int logging_interval = DEF_CAPTURE_INTERVAL;            // the data logging interval
 time_t cTime = now();
 bool time_set = false;                              // has the time been set?
 
@@ -212,20 +211,24 @@ String take_measurement(bool manual_measurement=false) {
   get_reading(&infoS, int_time, frame_avg, ae);
 
   // 1. Which date was this data point collected on?
-  line.concat("0");
+  line.concat(String(day()));
+  line.concat("/");
+  line.concat(String(month()));
+  line.concat("/");
+  line.concat(String(year()));
   line.concat(",");
 
   // 2. When was this data point collected?
-  unsigned long ms = millis();
-  int seconds = (ms / 1000) % 60 ;
-  int minutes = ((ms / (1000*60)) % 60);
-  int hours   = ((ms / (1000*60*60)) % 24);
+//  unsigned long ms = millis();
+//  int seconds = (ms / 1000) % 60 ;
+//  int minutes = ((ms / (1000*60)) % 60);
+//  int hours   = ((ms / (1000*60*60)) % 24);
   
-  line.concat(String(hours));
+  line.concat(String(hour()));
   line.concat(":");
-  line.concat(String(minutes));
+  line.concat(String(minute()));
   line.concat(":");
-  line.concat(String(seconds));
+  line.concat(String(second()));
   line.concat(",");
 
   // 3. Was this recording triggered manually?
@@ -306,7 +309,7 @@ void setup() {
   
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
+  while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
   
   Serial.println("PROGRAM START. Attempting to initialize SD card...");
   
@@ -329,7 +332,6 @@ void setup() {
   nsp32.Standby(0);
   Serial.println("NSP32 INITIALIZED. Waiting for time sync...");
 
-  
   // turn off the LED indicating program setup successfully.
   digitalWrite(7, LOW); 
 }
@@ -340,9 +342,9 @@ int read_index = 0;
 
 /* Arduino loop function */
 void loop() {
-  
   if (Serial) {
     // cable plugged in
+    digitalWrite(7, HIGH);
     if (Serial.available() > 0) {
       // data available
       char c = (char) Serial.read();
@@ -358,20 +360,18 @@ void loop() {
       if (end_of_line || read_index >= sizeof(ser_buffer)/sizeof(char)) {
         // end of line reached, or buffer has been filled, read the buffer
         read_index = 0;
-        // parse character array into string
-        String instruction = String(ser_buffer);
 
-        if (instruction == "ToggleDataCapture") {
-          // Toggle data capture while plugged in
+        if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
+          // 00: Toggle data capture while plugged in
           blinkLed(2);
-          Serial.println("OK");
-        } else if (instruction == "ManualCapture") {
-          // collect a data point manually
+          Serial.println("OK. ToggleDataCapture");
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
+          // 01: collect a data point manually
           String manual_data = take_measurement(true);
           Serial.println("DATA");
           Serial.println(manual_data);
-        } else if (instruction == "ExportData") {
-          // export all data line by line
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
+          // 02: export all data line by line
 
           // add the data export header
           Serial.println(">DATA_EXPORT");
@@ -380,15 +380,48 @@ void loop() {
           // print all lines of code
           
           blinkLed(4);
-        } else if (instruction == "DeleteAllData") {
-          // Delete the data logging file
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
+          // 03: Delete the data logging file
           st.delete_file(LOG_FILENAME);
           Serial.println("LOG FILE DELETED");
-        } else if (instruction.indexOf("SetCollectionInterval" == 0)) {
-          // Set new collection interval
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
+          // 04: Set new collection interval
+          // create string with serial buffer
+          String instruction = String(ser_buffer);
           int new_logging_interval = instruction.substring(instruction.indexOf("_")+1).toInt();
           logging_interval = new_logging_interval;
+          Serial.println("OK. SetCollectionInterval");
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
+          // 05: Set date and time
+          
+          String instruction = String(ser_buffer);
+          
+          int y = instruction.substring(2, 6).toInt();
+          int mth = instruction.substring(6, 8).toInt();
+          int d = instruction.substring(8, 10).toInt();
+
+          int h = instruction.substring(10, 12).toInt();
+          int m = instruction.substring(12, 14).toInt();
+          int s = instruction.substring(14, 16).toInt();
+
+          Serial.print(String(y));
+          Serial.print(" ");
+          Serial.print(String(mth));
+          Serial.print(" ");
+          Serial.print(String(d));
+          Serial.print(" ");
+          Serial.print(String(h));
+          Serial.print(" ");
+          Serial.print(String(m));
+          Serial.print(" ");
+          Serial.print(String(s));
+
+          setTime(h,m,s,d,mth,y);
+          Serial.println("OK. SetDateTime");
         } else {
+          String instruction = String(ser_buffer);
+          Serial.print("Uncaught command: ");
+          Serial.println(instruction);
           blinkLed(7);
         }
       }
@@ -399,10 +432,10 @@ void loop() {
   
   } else {
     // cable not plugged in
-  
+    digitalWrite(7, LOW);
+    
     // for sleep offsetting
     unsigned long record_start_ms = millis();
-    
 
     // take and record the spectral measurement
     take_measurement(false);
@@ -412,15 +445,13 @@ void loop() {
   
     // sleep for some interval before capturing data again
     delay(logging_interval - collection_duration);
-    
-
   }  
 }
 
 void blinkLed(int num) {
   for (int i = 0; i < num; i++) {
     digitalWrite(7, HIGH);
-    delay(500);
+    delay(250);
     digitalWrite(7, LOW);
     delay(250);
   }
