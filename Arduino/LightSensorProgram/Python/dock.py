@@ -4,6 +4,7 @@ import serial.tools.list_ports
 import time
 import datetime
 import os
+from threading import Thread
 
 # helpers
 cls = lambda: os.system('cls')
@@ -20,34 +21,60 @@ instructions = {
     "EXPORT_ALL": "02",
     "DELETE_ALL": "03",
     "SET_COLLECTION_INTERVAL": "04",
-    "SET_DATETIME": "05"
+    #"SET_DATETIME": "05",
+    #"SAY_HELLO": "07",
     }
 
 ports = serial.tools.list_ports.comports()
 
+def say_hello(port, response, ind):
+    s = serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT)
+    s.write(bytes("07" + '\n', 'utf-8'))
+    res = s.readline()
+    res = res.decode().strip()
+    if (res == "Hello"):
+        response[ind] = True
+        
+def check_serial_ports(old_ports):
+    all_ports = serial.tools.list_ports.comports()
+    new_ports = list(set(all_ports) - set(old_ports))
+    
+
+
 inp = ""
+
 while True:
     if (len(ports) == 0):
-        print("There are no serial ports available. \n Retrying")
-        for i in range(5):
-            time.sleep(1)
-            print('.', end='')
+        print("There are no serial ports available. \n Retrying in 5 seconds.")
+        time.sleep(5)
     else:
-        print("Available serial ports:")
-        for i in range(len(ports)):
-            print("[" + str(i) + "] " + ports[i].name)
         break
         
-while True:
-    inp = input("Please pick a port to connect to by the number on the left\n>")
-    if (inp.isnumeric() and int(inp) >= 0 and int(inp) < len(ports)): break
-    print("Invalid input. Please try again.")
+responses = [False] * len(ports)
+threads = [None] * len(ports)
+for i in range(len(threads)):
+    threads[i] = Thread(target=say_hello, args=(ports[i].name, responses, i))
+    threads[i].start()
 
-# open the serial port selected
-s = serial.Serial(port=ports[int(inp)].name, baudrate=BAUDRATE, timeout=SER_TIMEOUT)
+for i in range(len(threads)):
+    threads[i].join()
+    
+devices = []
+    
+for i in range(len(responses)):
+    if responses[i] == True:
+        devices.append({"id": i, "port_name": ports[i].name})
+        
+    print(ports[i].name + ": " + str(responses[i]))
+        
+
+
+# open the serial port
+s = serial.Serial(port=devices[0]["port_name"], baudrate=BAUDRATE, timeout=SER_TIMEOUT)
+
 
 # immediately send a time update command
-instruction = instructions["SET_DATETIME"] + "%s%s%s%s%s%s" %(str(datetime.datetime.now().year).zfill(4), str(datetime.datetime.now().month).zfill(2), str(datetime.datetime.now().day).zfill(2), str(datetime.datetime.now().hour).zfill(2), str(datetime.datetime.now().minute).zfill(2), str(datetime.datetime.now().second).zfill(2))
+instruction = "05" + "%s%s%s%s%s%s" %(str(datetime.datetime.now().year).zfill(4), str(datetime.datetime.now().month).zfill(2), str(datetime.datetime.now().day).zfill(2), str(datetime.datetime.now().hour).zfill(2), str(datetime.datetime.now().minute).zfill(2), str(datetime.datetime.now().second).zfill(2))
 s.write(bytes(instruction + '\n', 'utf-8'));
 res = s.readline()
 res_str = res.decode().strip()
@@ -112,6 +139,6 @@ while True:
         responded = True
         res = s.readline()
         res_str = res.decode().strip()
-        print('\n' + res_str + '\n')
+        print('----\n' + res_str + '\n----')
         
 
