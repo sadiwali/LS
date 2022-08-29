@@ -21,6 +21,6 @@
 #define NSP_READY             29                    // NSP ready pin
 
 // DEBUG
-#define NO_SAVE               true                  // do not save measurements (for debugging SD)
+#define NO_SAVE               false                  // do not save measurements (for debugging SD)
 
 #endif
