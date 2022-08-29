@@ -43,25 +43,19 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 
 // VARIABLES
 int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
-unsigned long data_counter = 0;                    // how many data points have been collected this session?
+unsigned long data_counter = 0;                     // how many data points have been collected this session?
 bool paused = false;                                // is data capture paused?
+char ser_buffer[16];                                // the serial buffer
+int read_index = 0;                                 // the serial buffer read index
 
 // OBJECTS
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi);         // NSP32 (using SPI channel)
+Storage st(SD_CS_PIN, LOG_FILENAME);                // the data storage object
 
-
-
-// Define the SD card object
-Storage st(SD_CS_PIN, LOG_FILENAME);
-
-/* Returns: the current date and time in the following format 'YYYY/MM/DD HH:MM:SS' */
-String get_current_datetime() {
-  return "";
-}
 
 /* Get a reading from the NSP32 sensor */
-void get_reading(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
+void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
   // wakeup the sensor if sleeping
   nsp32.Wakeup();
   // get the spectrum data. Note that if ae is true, int_time is ignored
@@ -88,7 +82,7 @@ String take_measurement(bool manual_measurement=false) {
   bool ae = true;     // the auto-exposure flag
   
   // pass in the settings, and take the reading from the NSP sensor
-  get_reading(&infoS, int_time, frame_avg, ae);
+  read_sensor(&infoS, int_time, frame_avg, ae);
   
   // 1. Which date was this data point collected on?
   line.concat(String(day()));
@@ -142,35 +136,38 @@ String take_measurement(bool manual_measurement=false) {
   // Standby seems to clear SpectrumInfo, therefore call it after processing the data
   nsp32.Standby(0);
 
-  
   // write the data to the SD card
   st.write_line(&line); 
 
   // increment data counter
   data_counter++;
   
-  digitalWrite(7, LOW); // turn off LED
+  // turn off LED
+  digitalWrite(7, LOW); 
+  
   return line;
+}
+
+/* Infinite loop LED to indicate an error. */
+void error_state() {
+  while (true) {
+    digitalWrite(7, HIGH);
+    delay(250);
+    digitalWrite(7, LOW);
+    delay(250);
+  }
 }
 
 /* Arduino setup function. */
 void setup() {
-
-  // for debugging the SD card, suspend loop
-  //suspendLoop();
-  
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
   pinMode(7, OUTPUT); // onboard LED output
-  pinMode(13, INPUT_PULLUP); // pushbutton pull-up input
 
   digitalWrite(7, HIGH); // turn LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
-  attachInterrupt(digitalPinToInterrupt(13), PushBtnTriggerISR, FALLING); // enable interrupt for pushbutton
   // initialize serial port for "Serial Monitor"
   Serial.begin(115200);
-  //while (!Serial); // wait for serial for debugging (this will hang the MCU until plugged into serial monitor) only for debugging
 
-  Serial.println("SD START");
   // attempt to initialize the SD
   while (true) {
     // initialize SD
@@ -179,26 +176,22 @@ void setup() {
     if (!st.is_errored()) {
       break;
     } else {
-      Serial.println("SD BAD");
+      // the SD card could not be initialized
     }
   }
 
-  Serial.println("NSP START");
-  
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
 }
 
-// the serial buffer and pointer
-char ser_buffer[32];
-int read_index = 0;
-
 /* Arduino loop function */
 void loop() {
   if (Serial) {
     // cable plugged in
+    
     digitalWrite(7, HIGH);
+    
     if (Serial.available() > 0) {
       // data available
       char c = (char) Serial.read();
@@ -270,10 +263,7 @@ void loop() {
           Serial.println(instruction);
         }
       }
-    }
-
-    // if the correct interval has passed, capture a data point unless paused.
-    
+    }  
   
   } else {
     // cable not plugged in
@@ -296,27 +286,11 @@ void loop() {
   
     // sleep for some interval before capturing data again
     delay(logging_interval - collection_duration);
-
   }  
-}
-
-void blinkLed(int num) {
-  for (int i = 0; i < num; i++) {
-    digitalWrite(7, HIGH);
-    delay(250);
-    digitalWrite(7, LOW);
-    delay(250);
-  }
 }
 
 /* NSP32m ready interrupt */
 void PinReadyTriggerISR() {
   // make sure to call this function when receiving a ready trigger from NSP32
   nsp32.OnPinReadyTriggered();
-}
-
-/* Pushbutton interrupt. When the pushbutton is pressed, take a manual measurement. */
-void PushBtnTriggerISR() {
-  //take_measurement(true);
-  blinkLed(2);
 }
