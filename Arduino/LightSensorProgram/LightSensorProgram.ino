@@ -162,10 +162,9 @@ void error_state() {
 void setup() {
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
   pinMode(7, OUTPUT); // onboard LED output
-
   digitalWrite(7, HIGH); // turn LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
-  // initialize serial port for "Serial Monitor"
+  // initialize serial port
   Serial.begin(115200);
 
   // attempt to initialize the SD
@@ -188,19 +187,21 @@ void setup() {
 /* Arduino loop function */
 void loop() {
   if (Serial) {
-    // cable plugged in
-    
+    // cable plugged in   
     digitalWrite(7, HIGH);
     
     if (Serial.available() > 0) {
       // data available
       char c = (char) Serial.read();
       bool end_of_line = false;
+      
       if (c != '\n') {
+        // if character is not EOL
         ser_buffer[read_index] = c;
         read_index ++;
       } else {
         end_of_line = true;
+        // mark the end of buffer for String conversion
         ser_buffer[read_index] = '\0';
       }
       
@@ -221,9 +222,8 @@ void loop() {
 
           // add the data export header
           Serial.println("DATA");
-          // how many lines to expect
-          Serial.println("0");
-          // print all lines of code
+
+          
           
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file

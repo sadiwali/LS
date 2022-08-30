@@ -5,6 +5,7 @@ import time
 import datetime
 import os
 from threading import Thread
+from os.path import exists
 
 # helpers
 cls = lambda: os.system('cls')
@@ -12,6 +13,10 @@ cls = lambda: os.system('cls')
 # CONSTANTS
 BAUDRATE = 115200
 SER_TIMEOUT = 10
+
+# FIILE IO
+f = None
+FILE_EXT = ".CSV"
 
 # Instructions
 instructions = {
@@ -74,7 +79,8 @@ s = serial.Serial(port=devices[0]["port_name"], baudrate=BAUDRATE, timeout=SER_T
 
 
 # immediately send a time update command
-instruction = "05" + "%s%s%s%s%s%s" %(str(datetime.datetime.now().year).zfill(4), str(datetime.datetime.now().month).zfill(2), str(datetime.datetime.now().day).zfill(2), str(datetime.datetime.now().hour).zfill(2), str(datetime.datetime.now().minute).zfill(2), str(datetime.datetime.now().second).zfill(2))
+date = str(datetime.datetime.now().year).zfill(4), str(datetime.datetime.now().month).zfill(2), str(datetime.datetime.now().day).zfill(2), str(datetime.datetime.now().hour).zfill(2), str(datetime.datetime.now().minute).zfill(2), str(datetime.datetime.now().second).zfill(2)
+instruction = "05" + "%s%s%s%s%s%s" %(date)
 s.write(bytes(instruction + '\n', 'utf-8'));
 res = s.readline()
 res_str = res.decode().strip()
@@ -110,6 +116,11 @@ while True:
         s.write(bytes(instructions["MANUAL_CAPTURE"] + '\n', 'utf-8'))
     elif (list(instructions.keys())[inp] == "EXPORT_ALL"):
         s.write(bytes(instructions["EXPORT_ALL"] + '\n', 'utf-8'))
+        # open a file to write response into
+        file_suffix = 0
+        while exists(date + file_suffix + FILE_EXT):
+            file_suffix += 1
+        f = open(date + file_suffix + FILE_EXT, 'w')
     elif (list(instructions.keys())[inp] == "DELETE_ALL"):
         s.write(bytes(instructions["DELETE_ALL"] + '\n', 'utf-8'))
     elif (list(instructions.keys())[inp] == "SET_COLLECTION_INTERVAL"):  
@@ -129,9 +140,7 @@ while True:
                 print("Enter a numeric value greater than 5000")
             elif (int(inp) < 5000):
                 print("Enter a value greater than 5000")
-    # inp = input("Enter a command to send...")
-    # inp += '\n';
-    # s.write(bytes(inp, 'utf-8'))
+
     time.sleep(0.05)
     
     
@@ -139,6 +148,12 @@ while True:
         responded = True
         res = s.readline()
         res_str = res.decode().strip()
+        
+        if (list(instructions.keys())[inp] == "EXPORT_ALL"):
+            # if the previous command was export all, open a file and write all lines to it
+            f.write(res_str)
+            f.write('\n') 
         print('----\n' + res_str + '\n----')
         
+    f.close();
 

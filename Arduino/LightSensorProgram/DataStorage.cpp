@@ -96,26 +96,43 @@ void Storage::write_line(String *line) {
 }
 
 /* Read a line given line number from the SD file */
-String Storage::read_line(unsigned int line) {
+String Storage::get_line(unsigned int line) {
   String line_to_ret = "";
 
   log_file.seek(0);
-  char cr;
+  char c;
 
   for (unsigned int i = 0; i < (line - 1); i++) {
-    cr = log_file.read();
-    if (cr == '\n') {
+    c = log_file.read();
+    if (c == '\n') {
       i++;
     }
   }
 
   for (unsigned int i = 0; i < 5000; i++) {
-    cr = log_file.read();
-    line_to_ret += cr;
-    if (cr == '\n') {
+    c = log_file.read();
+    line_to_ret += c;
+    if (c == '\n') {
       break;
     }
   }
+  return line_to_ret;
+}
+
+String Storage::read_line(unsigned int line, unsigned int buf_size) {
+  String line_to_ret = "";
+  char c;
+
+  if (line == 0) log_file.seek(0);
+
+  for (unsigned int i = 0; i < buf_size; i++) {
+    c = log_file.read();
+    if (c == '\n') {
+      break;
+    }
+    line_to_ret += c;
+  }
+
   return line_to_ret;
 }
 
