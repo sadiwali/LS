@@ -15,6 +15,7 @@ BAUDRATE = 115200                           # baudrate
 SER_TIMEOUT = 20                            # serial timeout (should be a few seconds longer than device sleep time)
 
 # FIILE IO
+SAVE_DIR = "data/"
 f = None                                    # for writing files
 FILE_EXT = ".CSV"                           # file extension
 
@@ -91,9 +92,10 @@ def open_file(filename):
     global f
     # open a file to write response into
     file_suffix = 0
-    while exists(str(filename) + str(file_suffix) + FILE_EXT):
+    save_filename = SAVE_DIR + str(filename) + str(file_suffix) + FILE_EXT
+    while exists(save_filename):
         file_suffix += 1
-    f = open(str(filename) + str(file_suffix) + FILE_EXT, 'w')
+    f = open(save_filename, 'w')
     
 def decode_cmd(cmd):
     return list(instructions.keys())[cmd]

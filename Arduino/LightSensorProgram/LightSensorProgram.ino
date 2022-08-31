@@ -269,7 +269,7 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
           // 09: Get device information
           Serial.println("DATA");
-          String to_ret = "device_name: "+ " data_points: " + String(data_counter) + " uptime: " + String(millis()/3600000) + "h"
+          String to_ret = "device_name: " + device_name + " data_points: " + String(data_counter) + " uptime: " + String(millis()/3600000, 8) + "h";
           Serial.println(to_ret);
         } else {
           Serial.println("Err '" + String(ser_buffer) + "'");
