@@ -64,9 +64,14 @@ void Storage::close_file() {
   log_file.close();
 }
 
-void Storage::delete_file() {
-  SD.remove(String(LOG_FILENAME) + String(LOG_FILE_EXT));
-  SD.remove(String(LOG_FILENAME) + String(METADATA_SUFFIX) + String(LOG_FILE_EXT));
+bool Storage::delete_file() {
+  int res_a = SD.remove(String(LOG_FILENAME) + String(LOG_FILE_EXT));
+  int res_b = SD.remove(String(LOG_FILENAME) + String(METADATA_SUFFIX) + String(LOG_FILE_EXT));
+  if (res_a == res_b && res_a == 1) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 /* Open the file, Write a line, then close the file. */

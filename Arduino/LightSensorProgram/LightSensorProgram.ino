@@ -34,6 +34,7 @@
 #include <ArduinoAdaptor.h>                         // for low-level interfacing with the NSP via Arduino
 #include <NSP32.h>                                  // for high-level interfacing with the NSP module
 #include "DataStorage.h"
+
 using namespace NanoLambdaNSP32;
 
 
@@ -47,6 +48,7 @@ unsigned long data_counter = 0;                     // how many data points have
 bool paused = false;                                // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
+String device_name = DEV_NAME_PREFIX;               // the device name for easier identification in control software
 
 // OBJECTS
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
@@ -176,6 +178,7 @@ void setup() {
       break;
     } else {
       // the SD card could not be initialized
+      delay(1000);
     }
   }
 
@@ -211,7 +214,8 @@ void loop() {
 
         if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
           // 00: Toggle data capture while plugged in
-          Serial.println("OK. ToggleDataCapture");
+          // TODO implement
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
           // 01: collect a data point manually
           String manual_data = take_measurement(true);
@@ -219,23 +223,23 @@ void loop() {
           Serial.println(manual_data);
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
           // 02: export all data line by line
-
           // add the data export header
           Serial.println("DATA");
 
-          
+          int i = 0;
+        
           
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
           st.delete_file();
-          Serial.println("OK. Log file deleted");
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
           // create string with serial buffer
           String instruction = String(ser_buffer);
           int new_logging_interval = instruction.substring(instruction.indexOf("_")+1).toInt();
           logging_interval = new_logging_interval;
-          Serial.println("OK. SetCollectionInterval");
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
           // 05: Set date and time
           String instruction = String(ser_buffer);
@@ -249,7 +253,7 @@ void loop() {
           int s = instruction.substring(14, 16).toInt();
           
           setTime(h,m,s,d,mth,y);
-          Serial.println("OK. Date set");
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
           // 06: list number of entries
           Serial.println("DATA");
@@ -257,10 +261,19 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
           // 07: Hello
           Serial.println("Hello");
-        } else {
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
+          // 08: Set device name
           String instruction = String(ser_buffer);
-          Serial.print("Err. ");
-          Serial.println(instruction);
+          device_name = DEV_NAME_PREFIX + instruction.substring(2);
+          Serial.println("OK");
+        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
+          // 09: Get device information
+          Serial.println("DATA");
+          String to_ret = "device_name: "+ " data_points: " + String(data_counter) + " uptime: " + String(millis()/3600000) + "h"
+          Serial.println(to_ret);
+        } else {
+          Serial.println("Err '" + String(ser_buffer) + "'");
+
         }
       }
     }  

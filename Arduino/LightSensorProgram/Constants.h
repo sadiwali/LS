@@ -5,6 +5,8 @@
 #define METADATA_SUFFIX       "_metadata"           // the suffix to indicate metadata file
 #define LOG_FILE_EXT          ".CSV"                // the log file extension
 
+#define DEV_NAME_PREFIX       "NSP"                 // the device name prefix
+
 #define DEF_CAPTURE_INTERVAL  5000                  // how frequently to capture data in ms
 #define MIN_WAVELENGTH        340                   // the minimum wavelength we are interested in
 #define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
@@ -21,6 +23,6 @@
 #define NSP_READY             29                    // NSP ready pin
 
 // DEBUG
-#define NO_SAVE               false                  // do not save measurements (for debugging SD)
+#define NO_SAVE               true                  // do not save measurements (for debugging SD)
 
 #endif

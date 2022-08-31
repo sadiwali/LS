@@ -29,7 +29,7 @@ class Storage {
     /* Close the SD file */
     void close_file();
 
-    void delete_file();
+    bool delete_file();
   
     /* Open the file, Write a line, then close the file. */
     void write_line(String *line);
