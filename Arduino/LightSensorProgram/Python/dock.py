@@ -11,7 +11,7 @@ cls = lambda: os.system('cls')              # clear console
 
 # CONSTANTS
 BAUDRATE = 115200                           # baudrate
-SER_TIMEOUT = 5                            # serial timeout (should be a few seconds longer than device sleep time)
+SER_TIMEOUT = 10                            # serial timeout (should be a few seconds longer than device sleep time)
 
 # FIILE IO
 SAVE_DIR = "./data/"
@@ -54,23 +54,27 @@ def open_file(filename):
     save_filename = SAVE_DIR + str(filename) + str(file_suffix) + FILE_EXT
     while exists(save_filename):
         file_suffix += 1
+        save_filename = SAVE_DIR + str(filename) + str(file_suffix) + FILE_EXT
     f = open(save_filename, 'w')
     
 def decode_cmd(cmd):
     return list(instructions.keys())[cmd]
 
 def say_hello(port, response, ind):
-    with serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT) as _s:
-        _s.write(bytes(instructions["_SAY_HELLO"] + '\n', 'utf-8'))
-        time.sleep(0.1)
-        
-        res = _s.readline()
-        res = res.decode().strip()
-        if "Hello" in res:
+    try:
+        with serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT) as _s:
+            _s.write(bytes(instructions["_SAY_HELLO"] + '\n', 'utf-8'))
+            time.sleep(0.1)
+            
             res = _s.readline()
             res = res.decode().strip()
-            # save the name to the response
-            response[ind] = res                    
+            if "Hello" in res:
+                res = _s.readline()
+                res = res.decode().strip()
+                # save the name to the response
+                response[ind] = res 
+    except Exception as e:
+        pass                
         
         
 if __name__ == "__main__":
