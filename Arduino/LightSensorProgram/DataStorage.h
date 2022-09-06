@@ -15,6 +15,7 @@ class Storage {
     File log_file;                                  // the file variable that holds the log file
     int CS_PIN;                                     // the SPI chip select pin
     bool ERR;                                       // was there an error with the Storage class?
+    unsigned int data_counter;                      // counts how mnay lines of data is stored
 
   public:
     /* Initialize the class with chip select pin and file name */  
@@ -30,6 +31,9 @@ class Storage {
     void close_file();
 
     bool delete_file();
+
+    /* Get the number of lines stored in the fle */
+    unsigned int data_count();
   
     /* Open the file, Write a line, then close the file. */
     void write_line(String *line);

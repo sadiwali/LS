@@ -33,7 +33,9 @@
 #include <TimeLib.h>                                // Date and time
 #include <ArduinoAdaptor.h>                         // for low-level interfacing with the NSP via Arduino
 #include <NSP32.h>                                  // for high-level interfacing with the NSP module
-#include "DataStorage.h"
+#include "DataStorage.h"                            // Data storage module
+#include <Adafruit_LittleFS.h>                      
+#include <InternalFileSystem.h>
 
 using namespace NanoLambdaNSP32;
 
@@ -44,7 +46,6 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 
 // VARIABLES
 int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
-unsigned long data_counter = 0;                     // how many data points have been collected this session?
 bool paused = false;                                // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
@@ -87,52 +88,53 @@ String take_measurement(bool manual_measurement=false) {
   read_sensor(&infoS, int_time, frame_avg, ae);
   
   // 1. Which date was this data point collected on?
-  line.concat(String(day()));
-  line.concat("/");
-  line.concat(String(month()));
-  line.concat("/");
-  line.concat(String(year()));
-  line.concat(",");
+  line += String(day());
+  line += "/";
+  line += String(month());
+  line += "/";
+  line += String(year());
+  line += ",";
 
   // 2. When was this data point collected?  
-  line.concat(String(hour()));
-  line.concat(":");
-  line.concat(String(minute()));
-  line.concat(":");
-  line.concat(String(second()));
-  line.concat(",");
+  line += String(hour());
+  line += ":";
+  line += String(minute());
+  line += ":";
+  line += String(second());
+  line += ",";
 
   // 3. Was this recording triggered manually?
-  line.concat(String(manual_measurement));
+  line += String(manual_measurement);
+  line += ",";
   
   // 4. What integration time was used?
-  line.concat(String(infoS.IntegrationTime));
-  line.concat(",");
+  line += String(infoS.IntegrationTime);
+  line += ",";
   
   // 5. What frame average number was used?
-  line.concat(String(frame_avg));
-  line.concat(",");
+  line += String(frame_avg);
+  line += ",";
 
   // 6. Was auto-exposure used?
-  line.concat(String(ae));
-  line.concat(",");
+  line += String(ae);
+  line += ",";
 
   // 7. Was the reading saturated? A reading should not be saturated if ae is used.
-  line.concat(String(infoS.IsSaturated));
-  line.concat(",");
+  line += String(infoS.IsSaturated);
+  line += ",";
 
   // 8. Then put in the CIE1931 coords
-  line.concat(String(infoS.X));
-  line.concat(",");
-  line.concat(String(infoS.Y));
-  line.concat(",");
-  line.concat(String(infoS.Z));
-  line.concat(",");
+  line += String(infoS.X);
+  line += ",";
+  line += String(infoS.Y);
+  line += ",";
+  line += String(infoS.Z);
+  line += ",";
 
   // 9. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5nm increments.
   for (int j = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE); j <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE); j++) {
-    line.concat(String(infoS.Spectrum[j] * CALIBRATION_FACTOR, CAPTURE_PRECISION)); 
-    line.concat(",");
+    line += String(infoS.Spectrum[j] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
+    line += ",";
   }
 
   // Standby seems to clear SpectrumInfo, therefore call it after processing the data
@@ -140,9 +142,6 @@ String take_measurement(bool manual_measurement=false) {
 
   // write the data to the SD card
   st.write_line(&line); 
-
-  // increment data counter
-  data_counter++;
   
   // turn off LED
   digitalWrite(7, LOW); 
@@ -226,9 +225,13 @@ void loop() {
           // add the data export header
           Serial.println("DATA");
 
-          int i = 0;
-        
-          
+          st.open_file();
+
+          for (int i = 0; i < st.data_count() + 1; i++) {
+            String line = st.read_line(i,5000);
+            Serial.println(line);
+          }
+          st.close_file();
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
           st.delete_file();
@@ -257,10 +260,12 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
           // 06: list number of entries
           Serial.println("DATA");
-          Serial.println(data_counter);
+          Serial.println(st.data_count());
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
           // 07: Hello
           Serial.println("Hello");
+          // send name
+          Serial.println(device_name);
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
           // 08: Set device name
           String instruction = String(ser_buffer);
@@ -269,7 +274,7 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
           // 09: Get device information
           Serial.println("DATA");
-          String to_ret = "device_name: " + device_name + " data_points: " + String(data_counter) + " uptime: " + String(millis()/3600000, 8) + "h";
+          String to_ret = "device_name: " + device_name + " data_points: " + String(st.data_count()) + " uptime: " + String(millis()/3600000, 8) + "h";
           Serial.println(to_ret);
         } else {
           Serial.println("Err '" + String(ser_buffer) + "'");

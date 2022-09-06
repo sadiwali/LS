@@ -2,7 +2,7 @@
 /* The storage class deals with the microSD card, and file management within the card. */
 /* Initialize the class with chip select pin and file name */
 Storage::Storage(int CS, String filename)
-: CS_PIN(CS), log_file_name(filename + LOG_FILE_EXT) {}
+: CS_PIN(CS), log_file_name(filename + LOG_FILE_EXT), data_counter(0) {}
 
 /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
 void Storage::init() {
@@ -13,21 +13,25 @@ void Storage::init() {
     return;
   }
   
-//      // open the metadata file and read data counter if it exists
-//      String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
-//      if (SD.exists(metadata_file_name)) {
-//        File metadata_file = SD.open(metadata_file_name, FILE_READ);
-//        
-//        if (!metadata_file) {
-//          ERR = true;
-//          return;
-//        }
-//        
-//        String line = metadata_file.readStringUntil('\n');
-//        // read the integer into data_counter
-//        data_counter = line.toInt();
-//        metadata_file.close();
-//      }
+  // open the metadata file and read data counter if it exists
+  String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
+  if (SD.exists(metadata_file_name)) {
+    File metadata_file = SD.open(metadata_file_name, FILE_READ);
+    
+    if (!metadata_file) {
+      ERR = true;
+      return;
+    }
+    
+    String line = metadata_file.readStringUntil('\n');
+    // read the integer into data_counter
+    data_counter = line.toInt();
+    metadata_file.close();
+  }
+}
+
+unsigned int Storage::data_count() {
+  return data_counter;
 }
 
 /* Once the SD card reader is initialized, attempt to open the log file */
@@ -79,29 +83,28 @@ void Storage::write_line(String *line) {
   if (NO_SAVE) return; // skip if no save flag is set
   open_file();
   log_file.println(*line);
-  
+  data_counter++;
   close_file();
 
-//      // open the metadata file and write counter to it
-//      String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
-//      if (SD.exists(metadata_file_name)) {
-//        // delete the file before updating
-//        SD.remove(metadata_file_name);
-//      }
-//      // create it brand new
-//      File metadata_file = SD.open(metadata_file_name, FILE_WRITE);
-//      
-//      if (!metadata_file) {
-//        ERR = true;
-//        return;
-//      }
-//      
-//      metadata_file.println(data_counter);
-//      metadata_file.close();
+  // open the metadata file and write counter to it
+  String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
+  File metadata_file = SD.open(metadata_file_name, FILE_WRITE);
+  // go to the beginning and overwrite
+  metadata_file.seek(0);
+  metadata_file.print(data_counter, DEC);
+  // print 10 extra spaces to overwrite the the file
+  for (int i = 0; i < 10; i++) {
+    metadata_file.print(" ");
+  }
+  metadata_file.close();
 }
 
 /* Read a line given line number from the SD file */
 String Storage::get_line(unsigned int line) {
+  if (!log_file) {
+    open_file();
+  }
+  
   String line_to_ret = "";
 
   log_file.seek(0);
@@ -121,6 +124,9 @@ String Storage::get_line(unsigned int line) {
       break;
     }
   }
+
+  close_file();
+  
   return line_to_ret;
 }
 
