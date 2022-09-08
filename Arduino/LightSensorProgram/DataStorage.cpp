@@ -2,7 +2,7 @@
 /* The storage class deals with the microSD card, and file management within the card. */
 /* Initialize the class with chip select pin and file name */
 Storage::Storage(int CS, String filename)
-: CS_PIN(CS), log_file_name(filename + LOG_FILE_EXT), data_counter(0) {}
+: CS_PIN(CS), log_file_name(filename + FILE_EXT) {}
 
 /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
 void Storage::init() {
@@ -12,26 +12,7 @@ void Storage::init() {
     ERR = true;
     return;
   }
-  
-  // open the metadata file and read data counter if it exists
-  String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
-  if (SD.exists(metadata_file_name)) {
-    File metadata_file = SD.open(metadata_file_name, FILE_READ);
-    
-    if (!metadata_file) {
-      ERR = true;
-      return;
-    }
-    
-    String line = metadata_file.readStringUntil('\n');
-    // read the integer into data_counter
-    data_counter = line.toInt();
-    metadata_file.close();
-  }
-}
 
-unsigned int Storage::data_count() {
-  return data_counter;
 }
 
 /* Once the SD card reader is initialized, attempt to open the log file */
@@ -69,9 +50,7 @@ void Storage::close_file() {
 }
 
 bool Storage::delete_file() {
-  int res_a = SD.remove(String(LOG_FILENAME) + String(LOG_FILE_EXT));
-  int res_b = SD.remove(String(LOG_FILENAME) + String(METADATA_SUFFIX) + String(LOG_FILE_EXT));
-  if (res_a == res_b && res_a == 1) {
+  if (SD.remove(String(LOG_FILENAME) + String(FILE_EXT))) {
     return true;
   } else {
     return false;
@@ -83,20 +62,7 @@ void Storage::write_line(String *line) {
   if (NO_SAVE) return; // skip if no save flag is set
   open_file();
   log_file.println(*line);
-  data_counter++;
   close_file();
-
-  // open the metadata file and write counter to it
-  String metadata_file_name = log_file_name + METADATA_SUFFIX + LOG_FILE_EXT;
-  File metadata_file = SD.open(metadata_file_name, FILE_WRITE);
-  // go to the beginning and overwrite
-  metadata_file.seek(0);
-  metadata_file.print(data_counter, DEC);
-  // print 10 extra spaces to overwrite the the file
-  for (int i = 0; i < 10; i++) {
-    metadata_file.print(" ");
-  }
-  metadata_file.close();
 }
 
 /* Read a line given line number from the SD file */

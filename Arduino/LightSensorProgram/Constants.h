@@ -2,8 +2,9 @@
 #define CONSTANTS_H
 
 #define LOG_FILENAME          "LOG1"                // the log filename to write to
-#define METADATA_SUFFIX       "_metadata"           // the suffix to indicate metadata file
-#define LOG_FILE_EXT          ".CSV"                // the log file extension
+#define METADATA_FILENAME     "METADATA"            // the metadata file name
+#define FILE_EXT              ".CSV"                // the log file extension
+
 
 #define DEV_NAME_PREFIX       "NSP"                 // the device name prefix
 
@@ -23,6 +24,6 @@
 #define NSP_READY             29                    // NSP ready pin
 
 // DEBUG
-#define NO_SAVE               true                  // do not save measurements (for debugging SD)
+#define NO_SAVE               false                  // do not save measurements (for debugging SD)
 
 #endif

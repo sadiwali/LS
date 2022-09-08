@@ -1,5 +1,6 @@
 /**
  * Sadi Wali August 2022
+ * Last modified: September 07 2022
  * 
  * This program combines a Sparkfun nRF52840, a microSD card reader, and
  * the NanoLambda NSP32m W1 to create a lightweight portable digital spectrometer that
@@ -25,20 +26,32 @@
  * SPI MOSI      DI           3
  * SPI MISO      DO           31
  * SPI SCK       SCK          30
+ * 
+ * 
+ * 
+ * Error codes:
+ * ------------------------------------
+ * 
+ * Error         Number of
+ *               flashes
+ * ------------------------------------
+ * SD card       1
+ * Internal FS   2
+ * 
+ * 
  **/
 
 #include "Adafruit_TinyUSB.h"                       // for serial communication on nrf52840 
 #include <SPI.h>                                    // Arduino SPI 
-#include <SD.h>                                     // Arduino SD
 #include <TimeLib.h>                                // Date and time
 #include <ArduinoAdaptor.h>                         // for low-level interfacing with the NSP via Arduino
 #include <NSP32.h>                                  // for high-level interfacing with the NSP module
 #include "DataStorage.h"                            // Data storage module
-#include <Adafruit_LittleFS.h>                      
-#include <InternalFileSystem.h>
+#include <Adafruit_LittleFS.h>                      // persistent data storage       
+#include <InternalFileSystem.h>                     // persistent data storage
 
 using namespace NanoLambdaNSP32;
-
+using namespace Adafruit_LittleFS_Namespace;
 
 const unsigned int PinRst = NSP_RESET;              // pin Reset
 const unsigned int PinSS = NSP_CS_PIN;              // NSP chip select pin
@@ -50,12 +63,16 @@ bool paused = false;                                // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification in control software
+int int_time = 500;                                 // default integration time for sensor
+int frame_avg = 3;                                  // how many frames to average
+bool ae = true;                                     // use autoexposure?
+unsigned int data_counter = 0;                      // how many data points collected and stored
 
 // OBJECTS
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi);         // NSP32 (using SPI channel)
 Storage st(SD_CS_PIN, LOG_FILENAME);                // the data storage object
-
+Adafruit_LittleFS_Namespace::File file(InternalFS);                              // the persistent file stored in persistent flash
 
 /* Get a reading from the NSP32 sensor */
 void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
@@ -68,7 +85,7 @@ void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae
     nsp32.UpdateStatus(); // call UpdateStatus() to check async result
   }
   // data has been collected, extract into info
-  nsp32.ExtractSpectrumInfo(info); // now we have all spectrum info in infoW, we can use e.g. "infoS.Spectrum" to access the spectrum data array
+  nsp32.ExtractSpectrumInfo(info); 
 }
 
 /* Take a manual or automatic measurement. */
@@ -78,11 +95,6 @@ String take_measurement(bool manual_measurement=false) {
   
   // format each line of CSV file into this line
   String line = "";
-
-  // settings for the reading
-  int frame_avg = 3;  // how many frames to average into single reading
-  int int_time = 0;   // the sensor integration time (0 because ae is used)
-  bool ae = true;     // the auto-exposure flag
   
   // pass in the settings, and take the reading from the NSP sensor
   read_sensor(&infoS, int_time, frame_avg, ae);
@@ -123,7 +135,7 @@ String take_measurement(bool manual_measurement=false) {
   line += String(infoS.IsSaturated);
   line += ",";
 
-  // 8. Then put in the CIE1931 coords
+  // 8. Then put in the CIE1931 values
   line += String(infoS.X);
   line += ",";
   line += String(infoS.Y);
@@ -131,8 +143,10 @@ String take_measurement(bool manual_measurement=false) {
   line += String(infoS.Z);
   line += ",";
 
-  // 9. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5nm increments.
-  for (int j = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE); j <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE); j++) {
+  // 9. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5 nm increments
+  for (int j = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
+       j <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
+       j++) {
     line += String(infoS.Spectrum[j] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
     line += ",";
   }
@@ -141,7 +155,10 @@ String take_measurement(bool manual_measurement=false) {
   nsp32.Standby(0);
 
   // write the data to the SD card
-  st.write_line(&line); 
+  st.write_line(&line);
+
+  data_counter++;
+  update_memory();
   
   // turn off LED
   digitalWrite(7, LOW); 
@@ -149,8 +166,23 @@ String take_measurement(bool manual_measurement=false) {
   return line;
 }
 
+/* Update the persistent storage */
+void update_memory() {
+  // overwrite the file
+  String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
+  InternalFS.remove(filename.c_str());
+  if (file.open(filename.c_str(), FILE_O_WRITE)) {
+    String writeline = device_name + "," + String(logging_interval) + "," + String(data_counter);
+    file.write(writeline.c_str(), strlen(writeline.c_str()));
+    file.close();
+  } else {
+    // could not create file
+    error_state(2);
+  }
+}
+
 /* Infinite loop LED to indicate an error. */
-void error_state() {
+void error_state(int code) {
   while (true) {
     digitalWrite(7, HIGH);
     delay(250);
@@ -167,20 +199,61 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
   // initialize serial port
   Serial.begin(115200);
+  //while (!Serial) delay(10);
+  
+  // initialize the persistent storage
+  // structure looks like: "device_name,logging_interval,data_counter"  
+  InternalFS.begin();
+//  delay(1000);
+//  InternalFS.format();
+//  Serial.println("FORMAT COMPLETE");
+//  return;
+  String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
+  file.open(filename.c_str(), FILE_O_READ);
 
-  // attempt to initialize the SD
-  while (true) {
-    // initialize SD
-    st.init();
-    // if the storage object is not errored, continue, otherwise retry
-    if (!st.is_errored()) {
-      break;
-    } else {
-      // the SD card could not be initialized
-      delay(1000);
+  if (file) {
+    // file exits, read the line
+    uint32_t readlen;
+    char buffer[64] = {0};
+    readlen = file.read(buffer, sizeof(buffer));
+    buffer[readlen] = '\0';
+    String readline = String(buffer);
+
+    Serial.println(readline);
+    
+    // parse the line
+    int delimiters[2];
+    int d_count = 0;
+    
+    for (int i = 0; i < readlen; i++) {
+      // loop through the character array
+      if (buffer[i] == ',') {
+        delimiters[d_count] = i;
+        d_count++;
+      }
     }
+    
+    device_name = readline.substring(0, delimiters[0]);
+    logging_interval = readline.substring(delimiters[0] + 1, delimiters[1]).toInt();
+    data_counter = readline.substring(delimiters[1] + 1).toInt();
+
+    Serial.println(device_name);
+    Serial.println(logging_interval);
+    Serial.println(data_counter);
+    
+    file.close();
+  } else {
+    update_memory();
   }
 
+  // attempt to initialize the SD
+  
+  st.init();
+  // if the SD storage object is errored, go into error state
+  if (st.is_errored()) {
+    error_state(1);
+  }
+  
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
@@ -191,6 +264,8 @@ void loop() {
   if (Serial) {
     // cable plugged in   
     digitalWrite(7, HIGH);
+    
+    // TODO: print the status of the sensor, is it reading? paused? etc.
     
     if (Serial.available() > 0) {
       // data available
@@ -227,7 +302,7 @@ void loop() {
 
           st.open_file();
 
-          for (int i = 0; i < st.data_count() + 1; i++) {
+          for (int i = 0; i < data_counter + 1; i++) {
             String line = st.read_line(i,5000);
             Serial.println(line);
           }
@@ -235,6 +310,7 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
           st.delete_file();
+          InternalFS.format();
           Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
@@ -242,6 +318,7 @@ void loop() {
           String instruction = String(ser_buffer);
           int new_logging_interval = instruction.substring(instruction.indexOf("_")+1).toInt();
           logging_interval = new_logging_interval;
+          update_memory();
           Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
           // 05: Set date and time
@@ -260,7 +337,7 @@ void loop() {
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
           // 06: list number of entries
           Serial.println("DATA");
-          Serial.println(st.data_count());
+          Serial.println(data_counter);
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
           // 07: Hello
           Serial.println("Hello");
@@ -270,11 +347,14 @@ void loop() {
           // 08: Set device name
           String instruction = String(ser_buffer);
           device_name = DEV_NAME_PREFIX + instruction.substring(2);
+          update_memory();
           Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
           // 09: Get device information
           Serial.println("DATA");
-          String to_ret = "device_name: " + device_name + " data_points: " + String(st.data_count()) + " uptime: " + String(millis()/3600000, 8) + "h";
+          String to_ret = "device_name: " + device_name + " data_points: " + 
+                          String(data_counter) + " uptime: " + String(millis()/3600000, 8) + "h Logging interval: " + 
+                          String(logging_interval) + "ms";
           Serial.println(to_ret);
         } else {
           Serial.println("Err '" + String(ser_buffer) + "'");
