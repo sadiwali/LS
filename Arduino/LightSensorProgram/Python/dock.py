@@ -1,3 +1,7 @@
+'''
+Command-line tool suite for Open Spectral Sensing (OSS) device.
+'''
+
 import serial
 import serial.tools.list_ports
 import time
@@ -14,52 +18,78 @@ BAUDRATE = 115200                           # baudrate
 SER_TIMEOUT = 10                            # serial timeout (should be a few seconds longer than device sleep time)
 
 # FIILE IO
-SAVE_DIR = "./data/"
+SAVE_DIR = "./data/"                        # directory for saving files
 f = None                                    # for writing files
 FILE_EXT = ".CSV"                           # file extension
 
 # user input
 inp = ""
 
-# Instructions that the device understands
+# Instructions that the OSS device understands
 instructions = {
-    "COUNT_SAVED_DATAPOINTS": "06",
     "TOGGLE_DATA_CAPTURE": "00",
     "MANUAL_CAPTURE": "01",
     "EXPORT_ALL": "02",
     "DELETE_ALL": "03",
     "SET_COLLECTION_INTERVAL": "04",
     "_SET_DATETIME": "05",
+    "COUNT_SAVED_DATAPOINTS": "06",
     "_SAY_HELLO": "07",
     "SET_DEVICE_NAME": "08",
     "GET_INFO": "09",
-    "DISCONNECT_DEVICE": "",
-    "DISCONNECT_ALL": "",
+    "DISCONNECT_DEVICE": "10",
+    "DISCONNECT_ALL": "11",
+    "PAUSE_COLLECTION": "12",
+    "RESUME_COLLECTION": "12",
 }
 
 
 # write to all devices, or a specific one if id is supplied
-def write_to_device(msg, id = -1):
+# TODO: reasoning invalid. Should only write to one device at a time, device selector needed
+def write_to_devices(msg, id = -1):
     global devices
-    
+
     for device in devices:
-        device["serial_object"].write(bytes(msg + '\n', 'utf-8'));
+        if (id != -1 and device["id"] != id):
+            continue
+        d = device["serial_object"]
+        d.write(bytes(msg + '\n', 'utf-8'))
+
         time.sleep(0.1)
-    
+
+        res_str = d.readline().decode().strip()
+
+        if res_str == "OK":
+            return True
+        elif res_str == "DATA":
+            res_str = d.readline().decode().strip()
+            return res_str
+        else:
+            return False
+
+
+        if (id != -1):
+            break
+
+# open a new file for writing. If file name already exists, append a number
 def open_file(filename):
     global f
     
     # open a file to write response into
     file_suffix = 0
-    save_filename = SAVE_DIR + str(filename) + str(file_suffix) + FILE_EXT
-    while exists(save_filename):
-        file_suffix += 1
+    while True:
         save_filename = SAVE_DIR + str(filename) + str(file_suffix) + FILE_EXT
-    f = open(save_filename, 'w')
+        if exists(save_filename):
+            file_suffix += 1
+        else:
+            f = open(save_filename, 'w')
+            break
     
+# cmd is the index displayed to user. The user selects this, and it is corresponded to an instruction
 def decode_cmd(cmd):
     return list(instructions.keys())[cmd]
 
+# Pings all serial devices connected, saves responses of valid OSS devices
 def say_hello(port, response, ind):
     try:
         with serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT) as _s:
@@ -103,31 +133,20 @@ if __name__ == "__main__":
     # look through the responses, and find spectral sensors and connect to them
     for i in range(len(responses)):
         if responses[i] is not None:
-            print(responses[i])
             devices.append({"id": i, "device_name": responses[i],"port_name": ports[i].name, "serial_object": serial.Serial(port=ports[i].name, baudrate=BAUDRATE, timeout=SER_TIMEOUT)})   
         print(ports[i].name + ": " + str(responses[i]))
             
-    # open the serial port
-    s = devices[0]["serial_object"]
-
     instruction = ""
 
-    # immediately send a time update command
+    # immediately send a time update command to all connected devices
     date = str(datetime.datetime.now().year).zfill(4) + str(datetime.datetime.now().month).zfill(2) + str(datetime.datetime.now().day).zfill(2) + str(datetime.datetime.now().hour).zfill(2) + str(datetime.datetime.now().minute).zfill(2) + str(datetime.datetime.now().second).zfill(2)
     instruction = "05" + date
     
-    write_to_device(instruction)
+    write_to_devices(instruction)
     
-    res = s.readline()
-    res_str = res.decode().strip()
-    if res_str != "OK":
-        print("Date time could not be set, please try again later.")
-    else:
-        print("Date time set successfully.")
+
         
-    # flush read stream
-    while s.in_waiting > 0:
-        s.readline()
+  
         
     while True:
         
@@ -191,7 +210,7 @@ if __name__ == "__main__":
         
         # write the command to the device
         print("Writing: '" + instruction + "'")
-        write_to_device(instruction)
+        write_to_devices(instruction)
         
         save_flag = None
         
