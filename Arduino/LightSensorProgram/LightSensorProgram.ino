@@ -64,8 +64,11 @@ char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification in control software
 int int_time = 500;                                 // default integration time for sensor
-int frame_avg = 3;                                  // how many frames to average
+int mod_int_time = int_time;                    
+int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
+int mod_frame_avg = frame_avg;
 bool ae = true;                                     // use autoexposure?
+bool mod_ae = ae;
 unsigned int data_counter = 0;                      // how many data points collected and stored
 
 // OBJECTS
@@ -88,17 +91,97 @@ void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae
   nsp32.ExtractSpectrumInfo(info); 
 }
 
+/* Check  */
+int validate_reading(SpectrumInfo infoS) {
+  if (infoS.IntegrationTime == 1 || infoS.Y <= MIN_ACCEPTABLE_Y) {
+    // Too dark
+    return -1;
+  }
+
+  if (infoS.IsSaturated == 1) {
+    return 1;
+  }
+
+  return 0; 
+}
+
 /* Take a manual or automatic measurement. */
 String take_measurement(bool manual_measurement=false) {
   digitalWrite(7, HIGH); // turn on LED
   SpectrumInfo infoS; // variable for storing the spectrum data
   
+  bool dark_flag = true;
+  bool too_dark = false;
+
+  read_sensor(&infoS, mod_int_time, mod_frame_avg, mod_ae);
+
+  while (true) {
+    
+    if (mod_int_time >= 800) {
+      // raising integration time did not improve reading
+      too_dark = true;
+      break;
+    }
+    
+    // pass in the settings, and take the reading from the NSP sensor
+    read_sensor(&infoS, mod_int_time, mod_frame_avg, mod_ae);
+
+    // validate the results
+    int validation_res = validate_reading(infoS);
+    
+    if (validation_res == 1) {
+      // too bright, nothing to do
+      break;
+    } else if (validation_res == -1) {
+      // too dark, try upping integration time until not saturated
+      
+      // turn off auto-exposure, and set frame average to half to speed up finding the right integration time
+      mod_ae = false;
+      mod_frame_avg = frame_avg / 2;
+      
+      if (dark_flag) {
+        dark_flag = false;
+        mod_int_time = 500;
+        continue;
+      }
+
+      mod_int_time += 50;
+      
+    } else {
+      // no issues, break out of loop
+      break;
+    }
+  }
+
   // format each line of CSV file into this line
+  String line = format_line(infoS, manual_measurement, too_dark);
+
+  // Standby seems to clear SpectrumInfo, therefore call it after processing the data
+  nsp32.Standby(0);
+
+  // reset the ae, int_time, and frame_avg
+  mod_ae = ae;
+  mod_int_time = int_time;
+  mod_frame_avg = frame_avg;
+
+  // write the data to the SD card
+  bool write_res = st.write_line(&line);
+  if (!write_res) {
+    error_state(3);
+  }
+  
+  data_counter++;
+  
+  update_memory();
+  
+  // turn off LED
+  digitalWrite(7, LOW); 
+  
+  return line;
+}
+
+String format_line(SpectrumInfo infoS, bool manual_measurement, bool too_dark) {
   String line = "";
-  
-  // pass in the settings, and take the reading from the NSP sensor
-  read_sensor(&infoS, int_time, frame_avg, ae);
-  
   // 1. Which date was this data point collected on?
   line += String(day());
   line += "/";
@@ -124,18 +207,22 @@ String take_measurement(bool manual_measurement=false) {
   line += ",";
   
   // 5. What frame average number was used?
-  line += String(frame_avg);
+  line += String(mod_frame_avg);
   line += ",";
 
   // 6. Was auto-exposure used?
-  line += String(ae);
+  line += String(mod_ae);
   line += ",";
 
   // 7. Was the reading saturated? A reading should not be saturated if ae is used.
   line += String(infoS.IsSaturated);
   line += ",";
 
-  // 8. Then put in the CIE1931 values
+  // 8. Was the lighting too dark when this reading took place? This reading should not be used.
+  line += String(too_dark);
+  line += ",";
+
+  // 9. Then put in the CIE1931 values
   line += String(infoS.X);
   line += ",";
   line += String(infoS.Y);
@@ -143,26 +230,13 @@ String take_measurement(bool manual_measurement=false) {
   line += String(infoS.Z);
   line += ",";
 
-  // 9. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5 nm increments
+  // 10. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5 nm increments
   for (int j = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
        j <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
        j++) {
     line += String(infoS.Spectrum[j] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
     line += ",";
   }
-
-  // Standby seems to clear SpectrumInfo, therefore call it after processing the data
-  nsp32.Standby(0);
-
-  // write the data to the SD card
-  st.write_line(&line);
-
-  data_counter++;
-  update_memory();
-  
-  // turn off LED
-  digitalWrite(7, LOW); 
-  
   return line;
 }
 
@@ -184,12 +258,16 @@ void update_memory() {
 /* Infinite loop LED to indicate an error. */
 void error_state(int code) {
   while (true) {
-    digitalWrite(7, HIGH);
-    delay(250);
-    digitalWrite(7, LOW);
-    delay(250);
+    for (int i = 0; i < code; i ++) {
+      digitalWrite(7, HIGH);
+      delay(250);
+      digitalWrite(7, LOW);
+      delay(250);
+    }
+    delay(500);
   }
 }
+
 
 /* Arduino setup function. */
 void setup() {
@@ -218,8 +296,6 @@ void setup() {
     readlen = file.read(buffer, sizeof(buffer));
     buffer[readlen] = '\0';
     String readline = String(buffer);
-
-    Serial.println(readline);
     
     // parse the line
     int delimiters[2];
@@ -236,10 +312,6 @@ void setup() {
     device_name = readline.substring(0, delimiters[0]);
     logging_interval = readline.substring(delimiters[0] + 1, delimiters[1]).toInt();
     data_counter = readline.substring(delimiters[1] + 1).toInt();
-
-    Serial.println(device_name);
-    Serial.println(logging_interval);
-    Serial.println(data_counter);
     
     file.close();
   } else {

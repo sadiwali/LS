@@ -32,7 +32,7 @@ void Storage::open_file() {
   // file opened, check if new file
   if (log_file.size() == 0) {
     // brand new file, add headers
-    String line = "DATE,TIME,MANUAL,INT_TIME,FRAME_AVG,AE,IS_SATURATED,X,Y,Z,";
+    String line = "DATE,TIME,MANUAL,INT_TIME,FRAME_AVG,AE,IS_SATURATED,IS_DARK,X,Y,Z,";
 
     // add the wavelengths to the header
     for (int i = MIN_WAVELENGTH; i <= MAX_WAVELENGTH; i += WAVELENGTH_STEPSIZE) {
@@ -58,11 +58,16 @@ bool Storage::delete_file() {
 }
 
 /* Open the file, Write a line, then close the file. */
-void Storage::write_line(String *line) {
-  if (NO_SAVE) return; // skip if no save flag is set
+bool Storage::write_line(String *line) {
+  if (NO_SAVE) return true; // skip if no save flag is set
   open_file();
+  
+  if (!log_file) return false;
+  
   log_file.println(*line);
+  
   close_file();
+  return true;
 }
 
 /* Read a line given line number from the SD file */

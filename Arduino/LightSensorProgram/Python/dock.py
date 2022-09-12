@@ -2,6 +2,7 @@
 Command-line tool suite for Open Spectral Sensing (OSS) device.
 '''
 
+from tkinter.tix import MAX
 import serial
 import serial.tools.list_ports
 import time
@@ -16,6 +17,9 @@ cls = lambda: os.system('cls')              # clear console
 # CONSTANTS
 BAUDRATE = 115200                           # baudrate
 SER_TIMEOUT = 10                            # serial timeout (should be a few seconds longer than device sleep time)
+MIN_WAVELENGTH = 340
+MAX_WAVELENGTH = 1010
+WAVELENGTH_STEPSIZE = 5
 
 # FIILE IO
 SAVE_DIR = "./data/"                        # directory for saving files
@@ -57,15 +61,15 @@ def write_to_devices(msg, id = -1):
 
         time.sleep(0.1)
 
-        res_str = d.readline().decode().strip()
+        # res_str = d.readline().decode().strip()
 
-        if res_str == "OK":
-            return True
-        elif res_str == "DATA":
-            res_str = d.readline().decode().strip()
-            return res_str
-        else:
-            return False
+        # if res_str == "OK":
+        #     return True
+        # elif res_str == "DATA":
+        #     res_str = d.readline().decode().strip()
+        #     return res_str
+        # else:
+        #     return False
 
 
         if (id != -1):
@@ -84,6 +88,12 @@ def open_file(filename):
         else:
             f = open(save_filename, 'w')
             break
+        
+    # add the file header
+    f.write("DATE,TIME,MANUAL,INT_TIME,FRAME_AVG,AE,IS_SATURATED,IS_DARK,X,Y,Z,")
+    for i in range (MIN_WAVELENGTH, MAX_WAVELENGTH + WAVELENGTH_STEPSIZE, WAVELENGTH_STEPSIZE):
+        f.write(str(i) + ",")
+    f.write("\n")
     
 # cmd is the index displayed to user. The user selects this, and it is corresponded to an instruction
 def decode_cmd(cmd):
@@ -146,7 +156,7 @@ if __name__ == "__main__":
     
 
         
-  
+    s = devices[0]["serial_object"]
         
     while True:
         
@@ -236,7 +246,7 @@ if __name__ == "__main__":
                     else: save_flag = False
                     
                 if save_flag == True:
-                    if (res_str != "DATA"):
+                    if (res_str != "DATA" and res_str != "OK"):
                         f.write(res_str)
                         f.write('\n')
         # outside the loop means device done sending

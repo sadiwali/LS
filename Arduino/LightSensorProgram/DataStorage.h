@@ -32,7 +32,7 @@ class Storage {
     bool delete_file();
 
     /* Open the file, Write a line, then close the file. */
-    void write_line(String *line);
+    bool write_line(String *line);
   
     /* Read a line given line number from the SD file */
     String get_line(unsigned int line);

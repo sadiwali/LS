@@ -13,9 +13,11 @@
 #define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
 #define SENSOR_MIN_WAVELENGTH 340                   // the minimum sensing wavelength (for W1 sensor)
 #define SENSOR_MAX_WAVELENGTH 1010                  // the maximum sensing wavelength  (for W1 sensor)
+#define DEF_FRAME_AVG         6                     // how many frames to average into single reading
 #define WAVELENGTH_STEPSIZE   5                     // the sensor wavelength resolution (5 nm for W1 sensor)
 #define CAPTURE_PRECISION     18                    // how many digits of precision to write (18 digits)
 #define CALIBRATION_FACTOR    1                     // the calibration factor for the particular sensor
+#define MIN_ACCEPTABLE_Y      5                     // the minimum acceptable Y value for reading (CIE1931)
 
 // PINS
 #define SD_CS_PIN             4                     // pin connected to SD CS
