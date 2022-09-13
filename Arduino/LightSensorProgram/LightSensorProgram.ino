@@ -62,7 +62,7 @@ int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
 bool paused = false;                                // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
-String device_name = DEV_NAME_PREFIX;               // the device name for easier identification in control software
+String device_name = DEV_NAME_PREFIX;               // the device name for easier identification
 int int_time = 500;                                 // default integration time for sensor
 int mod_int_time = int_time;                    
 int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
@@ -75,7 +75,7 @@ unsigned int data_counter = 0;                      // how many data points coll
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi);         // NSP32 (using SPI channel)
 Storage st(SD_CS_PIN, LOG_FILENAME);                // the data storage object
-Adafruit_LittleFS_Namespace::File file(InternalFS);                              // the persistent file stored in persistent flash
+Adafruit_LittleFS_Namespace::File file(InternalFS); // the persistent file stored in persistent flash
 
 /* Get a reading from the NSP32 sensor */
 void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
@@ -415,6 +415,10 @@ void loop() {
           Serial.println("Hello");
           // send name
           Serial.println(device_name);
+          // send interval
+          Serial.println(logging_interval);
+          // send status
+          Serial.println(paused);
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
           // 08: Set device name
           String instruction = String(ser_buffer);
