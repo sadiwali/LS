@@ -18,13 +18,10 @@ void Storage::init() {
 /* Once the SD card reader is initialized, attempt to open the log file */
 void Storage::open_file() {
   // attempt to open SD card for writing
-  int i = 0;
-  for (i = 0; i < 5; i++) {
-    log_file = SD.open(log_file_name, FILE_WRITE);
-    if (log_file) break;
-  }
-
-  if (i == 5) {
+  if (log_file) return;
+  
+  log_file = SD.open(log_file_name, FILE_WRITE);
+  if (!log_file) {
     ERR = true;
     return;
   }
@@ -40,7 +37,7 @@ void Storage::open_file() {
       line.concat(",");
     }
     // finally write the header string to file
-    write_line(&line);
+    log_file.println(line);
   }
 }
 

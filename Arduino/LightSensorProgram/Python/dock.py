@@ -2,12 +2,6 @@
 Command-line tool suite for Open Spectral Sensing (OSS) device.
 '''
 
-from asyncore import write
-from curses import baudrate
-from logging import exception
-from operator import truediv
-from socket import timeout
-from tkinter.tix import MAX
 import serial
 import serial.tools.list_ports
 import time
@@ -15,12 +9,14 @@ import datetime
 import os
 from threading import Thread
 from os.path import exists
+import matplotlib.pyplot as plt
+import mplcursors as mpc
 
 # helpers
 cls = lambda: os.system('cls')              # clear console
 
 # CONSTANTS
-BAUDRATE = 115200                           # baudrate
+BAUDRATE = 921600                           # baudrate
 SER_TIMEOUT = 10                            # serial timeout (should be a few seconds longer than device sleep time)
 MIN_WAVELENGTH = 340
 MAX_WAVELENGTH = 1010
@@ -32,7 +28,6 @@ instruction = ""                            # the serial instruction to send to 
 
 # FIILE IO
 SAVE_DIR = "./data/"                        # directory for saving files
-f = None                                    # for writing files
 FILE_EXT = ".CSV"                           # file extension
 
 # user input
@@ -46,16 +41,17 @@ instructions = {
     "DELETE_ALL": "03",
     "SET_COLLECTION_INTERVAL": "04",
     "_SET_DATETIME": "05",
-    "COUNT_SAVED_DATAPOINTS": "06",
     "_SAY_HELLO": "07",
     "SET_DEVICE_NAME": "08",
     "GET_INFO": "09",
-    "PAUSE_COLLECTION": "12",
-    "RESUME_COLLECTION": "12",
+    "_NSP_SETTINGS": "10",
 }
 
 local_functions = [
     "DISCONNECT",
+    "TOGGLE_AE",
+    "SET_FRAME_AVG",
+    "SET_INT_TIME",
 ]
 
 def connect_to_device(port_name):
@@ -67,23 +63,28 @@ def connect_to_device(port_name):
         return None
 
 # write to all devices, or a specific one if id is supplied
-def write_to_device(msg, responses = None, ind = -1, port_name = None, serial_obj = None):
-        try:
-            if (port_name and serial_obj is None):
-                serial_obj = serial.Serial(port=port_name, baudrate=BAUDRATE, timeout=SER_TIMEOUT)
-            serial_obj.write(bytes(msg + '\n', 'utf-8'))
-            time.sleep(0.1)
-            if (responses is not None and ind != -1):
-                responses[ind] = True
-            else:
-                return True
-        except Exception as e:
-            return False
+def write_to_device(msg, serial_object):
+    try:
+        serial_object.write(bytes(msg + '\n', 'utf-8'))
+        time.sleep(0.1)
+        return True
+    except Exception as e:
+        return False
+           
+def read_from_device(serial_object):
+    response = []
+    recv_ok = False
+    while (recv_ok == False):
+        line = serial_object.readline().decode().strip()
+        if (line.lower() == "ok"):
+            recv_ok = True
+        if (line.lower() != "Err ''"):
+            response.append(line)
+    return response
 
 # open a new file for writing. If file name already exists, append a number
-def open_file(filename):
-    global f
-    
+def open_file(filename, add_header = False):
+    f = None
     # open a file to write response into
     file_suffix = 0
     while True:
@@ -95,7 +96,8 @@ def open_file(filename):
             break
         
     # add the file header
-    f.write(file_header())
+    if (add_header): f.write(file_header())
+    return f, save_filename
 
 # produce the file header
 def file_header():
@@ -104,33 +106,48 @@ def file_header():
         line += str(i) + ","
     line += "\n"
     return line
-    
-# cmd is the index displayed to user. The user selects this, and it is corresponded to an instruction
-def decode_cmd(cmd):
-    return list(instructions.keys())[cmd]
 
 # Pings all serial devices connected, saves responses of valid OSS devices. If response was valid, table contains name, else None
 def say_hello(port, response, ind):
     try:
         with serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT) as _s:
-            _s.write(bytes(instructions["_SAY_HELLO"] + '\n', 'utf-8'))
-            time.sleep(0.1)
+            device = update_device_status(_s)
+            response[ind] = device
             
-            res = _s.readline().decode().strip()
-            
-            if res.lower() == "hello":
-                # if hello is the first response, second response is the device name
-                device_name = _s.readline().decode().strip()
-                logging_interval = _s.readline().decode().strip()
-                device_status = _s.readline().decode().strip()
-                # save the name to the response
-                response[ind] = {"port_name": port, "device_name": device_name, "logging_interval": logging_interval, "device_status": device_status}
     except Exception as e:
         pass      
     
+def update_device_status(s):
+    try:
+        s.write(bytes(instructions["_SAY_HELLO"] + '\n', 'utf-8'))
+        time.sleep(0.1)
+        
+        res = s.readline().decode().strip()
+        
+        if res.lower() == "data":
+            # if data is the first response, second response is the device name
+            device_name = s.readline().decode().strip()
+            logging_interval = s.readline().decode().strip()
+            device_status = s.readline().decode().strip()
+            data_counter = s.readline().decode().strip()
+            # clear the buffer by reading the OK response
+            _ok = s.readline()
+            # save the name to the response
+            device = {"port_name": s.port, 
+                      "device_name": device_name, 
+                      "logging_interval": logging_interval, 
+                      "data_counter": data_counter,
+                      "device_status": device_status}
+    
+        return device
+    
+    except Exception as e:
+        return None
+                
+
 def find_devices():
     # list of serial ports connected to the computer
-    ports = [None]
+    ports = []
     
     while True:
         ports = serial.tools.list_ports.comports()
@@ -154,105 +171,232 @@ def find_devices():
     for i in range(len(threads)):
         threads[i].join()
         
-    # detected spectral sensors
-    devices = []
-    # look through the responses, and find spectral sensors and connect to them
-    for i in range(len(responses)):
-        if responses[i] is not None:
-            devices.append({
-                "device_name": responses[i]["device_name"],
-                "port_name": responses[i]["port_name"],
-                "logging_interval": responses[i]["logging_interval"],
-                "device_status": responses[i]["device_status"],
-                "serial_object": None
-            })
-            
+    # detected spectral sensors          
+    devices = [i for i in responses if i is not None]
+
     return devices     
 
-def set_date(devices):
-    # immediately send a time update command to all connected devices
-    date = str(datetime.datetime.now().year).zfill(4) + str(datetime.datetime.now().month).zfill(2) + str(datetime.datetime.now().day).zfill(2) + str(datetime.datetime.now().hour).zfill(2) + str(datetime.datetime.now().minute).zfill(2) + str(datetime.datetime.now().second).zfill(2)
-    instruction = "05" + date
+def get_formatted_date():
+    return (str(datetime.datetime.now().year).zfill(4) +
+            str(datetime.datetime.now().month).zfill(2) +
+            str(datetime.datetime.now().day).zfill(2) +
+            str(datetime.datetime.now().hour).zfill(2) +
+            str(datetime.datetime.now().minute).zfill(2) +
+            str(datetime.datetime.now().second).zfill(2))
+
+# format a datapoint for quick graphing
+def get_formatted_datapoint(line):
+    tokens = line.split(',')
+    timestamp = tokens[0] + " " + tokens[1]
+    manual = bool(int(tokens[2]))
+    int_time = int(tokens[3])
+    frame_avg = int(tokens[4])
+    ae = bool(int(tokens[5]))
+    is_saturated = bool(int(tokens[6]))
+    is_dark = bool(int(tokens[7]))
+    cie_x = float(tokens[8])
+    cie_y = float(tokens[9])
+    cie_z = float(tokens[10])
     
-    # resize threads for each detected OSS device
-    threads = [None] * len(devices)
-    results = [None] * len(devices
-                           )
-    # send a serial command to sync time with all connected devices
-    for i, device in enumerate(devices):
-        threads[i] = Thread(target=write_to_device, args=(instruction, ), kwargs={"port_name": device["port_name"]})
-        threads[i].start()
     
-    # close the serial device after setting time
-    for i, device in enumerate(devices):
-        threads[i].join()
-        device["serial_object"].close()
+    x = [i for i in range(MIN_WAVELENGTH, MAX_WAVELENGTH + WAVELENGTH_STEPSIZE, WAVELENGTH_STEPSIZE)]
+    y = [float(i) for i in tokens[11:-1]]
+
+    print(len(x), len(y))
+    return [x, y, timestamp, manual, int_time, frame_avg, ae, is_saturated, is_dark, cie_x, cie_y, cie_z]
+
+def flush_serial(s):
+    while s.in_waiting > 0:
+        s.readline()
+    
         
 if __name__ == "__main__":
-    
-    devices = find_devices()
-    set_date(devices)
-          
+              
     # start main loop
     while True:
-        
+        devices = find_devices()
         while True:
+            # first loop, select a device
             print("Detected devices:")
-            # first, select a device to communicate with
-            for i, key in enumerate(devices):
+            
+            for i, device in enumerate(devices):
                 print("[" + str(i) + "] " + device["device_name"])
                 
             inp = input("Select a device to connect to")
-            if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) > len(devices)):
+            if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) >= len(devices)):
                 print("Invalid entry. Please try again.")
                 continue
             
-            inp = int(inp.strip())
+            inp = int(inp)
             
             # S is the selected OSS device
-            s = devices[inp]
-            # connect to serial
-            s["serial_object"] = connect_to_device(s["port_name"])
+            d = devices[inp]
+            s = connect_to_device(d["port_name"])
             
-            if (s["serial_object"] is None):
+            if (s is None):
                 print("Could not connect, please try again.")
                 continue
             
             break
+        
+        response = ""
+        
+        # device selected, set time
+        date = get_formatted_date()
+        instruction = instructions["_SET_DATETIME"] + date
+        write_to_device(instruction, s)
+        resp = read_from_device(s)
+        if len(resp) <= 0 or resp[0].lower() != "ok":
+            response = "Time could not be set."
+        else:
+            response = "Time has been set successfully to " + date
             
-            
+        
+        flush_serial(s)
+        
+        # trigger device status update flag
+        trigger_update = False
+        
         while True:
-            # second, choose instructions to send to the device selected
-            print("Selected device: " + s["device_name"] + " on port: " + s["port_name"] + ". \n Currently RECORDING every ")
-            for i, key in enumerate(instructions.keys()):
-                print("[" + str(i) + "] " + key)
+            # update device status
+            if (trigger_update):
+                d = update_device_status(s)
+                trigger_update = False
                 
+            cls()
+            print(response)
+            print('---')
+            # second loop, choose instructions to send to the device selected
+            print("Selected device: " + d["device_name"] + " on port: " + 
+                  d["port_name"] + ".\nCurrently " +
+                  ("RECORDING" if d["device_status"] == '1' else "PAUSED") +
+                  ". Recording interval is set to " + str(d["logging_interval"]))
+            print("---")
+            for i, key in enumerate(instructions.keys()):
+                
+                if (key == "TOGGLE_DATA_CAPTURE"):
+                    print("[" + str(i) + "] " + ("STOP_RECORDING" if d["device_status"] == "1" else "START_RECORDING"))
+                elif (key == "EXPORT_ALL"): 
+                    print("[" + str(i) + "] " + key + " (" + str(d["data_counter"]) + " entries)")
+                else:
+                    print("[" + str(i) + "] " + key)
                 
             inp = input("Choose a command by entering the number in front\n>")
-            if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) > len(instructions.keys())):
+            
+            if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) >= (len(instructions.keys()) +
+                                                                            len(local_functions))):
                 print("Invalid entry. Please try again.")
                 continue
             
-            # flag to wait for response
-            responded = False
+            inp = int(inp)
             
-            inp = int(inp.strip())
-            
+            if (inp >= len(instructions.keys())):
+                # local function chosen
+                inp = inp - len(instructions.keys())
+                cmd = local_functions[inp]
+                
+                if (cmd == "DISCONNECT"):
+                    s.close()                        
+                
+                break
+
             # find the right command to send
-            cmd = decode_cmd(inp)
+            cmd = list(instructions.keys())[inp]
+            instruction = ""
             
-            if (cmd == "MANUAL_CAPTURE"):
+            if (cmd == "TOGGLE_DATA_CAPTURE"):
+                instruction = instructions["TOGGLE_DATA_CAPTURE"]
+                write_to_device(instruction, s)
+                response = read_from_device(s)
+                
+                trigger_update = True
+                
+            elif (cmd == "MANUAL_CAPTURE"):
+                save_file = False
+                do_graph = False
+                
+                while True:
+                    inp = input("Do you want to save the result? y or n or cancel\n>").strip()
+                    if inp.lower() == "cancel" or inp.lower() == "exit":
+                        print("Command cancelled. Datapoint not captured.")
+                        break
+                    if (inp.lower() == 'y'):
+                        save_file = True
+                    elif (inp.lower() == 'n'):
+                        save_file = False
+                    else:
+                        continue
+                    
+                    inp = input("Do you want to graph the result? y or n or cancel\n>").strip()
+                    if inp.lower() == "cancel" or inp.lower() == "exit":
+                        print("Command cancelled. Datapoint not captured.")
+                        break
+                    
+                    if (inp.lower() == 'y'):
+                        do_graph = True
+                    elif (inp.lower() == 'n'):
+                        do_graph = False
+                    else:
+                        continue
+                    
+                    break
+                    
                 instruction = instructions["MANUAL_CAPTURE"]
+                write_to_device(instruction, s)
+                response = read_from_device(s)
+                
+                trigger_update = True
+                
+                if (save_file):
+                    f, file_name = open_file("MANUAL_" + get_formatted_date())
+                    f.write(response[1] + "\n")
+                    f.close()
+                
+                if (do_graph):
+                    print(response)
+                    x, y, timestamp, manual, int_time, frame_avg, ae, is_saturated, is_dark, cie_x, cie_y, cie_z  = get_formatted_datapoint(response[1])
+                    plt.plot(x,y)
+                    plt.xlim([MIN_WAVELENGTH, MAX_WAVELENGTH])
+                    plt.ylabel("Power (W/m^2)")
+                    plt.xlabel("Wavelength (nm)")
+                    plt.title("Manual Datapoint Capture at " + timestamp)
+                    plt.text(500, 300, "X: " + str(cie_x), ha='center', va='center', transform=None)
+                    plt.text(500, 280, "Y: " + str(cie_y), ha='center', va='center', transform=None)
+                    plt.text(500, 260, "Z: " + str(cie_z), ha='center', va='center', transform=None)
+                    mpc.cursor(hover=True)
+                    plt.show()
+                    
             elif (cmd == "EXPORT_ALL"):
-                open_file(date)
+                f, file_name = open_file(get_formatted_date())
                 instruction = instructions["EXPORT_ALL"]
+                write_to_device(instruction, s)
+
+                while (True):
+                    line = s.readline().decode().strip()
+                    
+                    if (line.lower() == "data"):
+                        continue
+                    
+                    if (line.lower() == "ok"):
+                        break
+                    
+                    # append the line to file
+                    f.write(line + "\n")                
+                # close the file    
+                f.close()
+                response = "File saved as " + file_name
+                
+            elif (cmd == "DELETE_ALL"):
+                instruction = instructions["DELETE_ALL"]
+                write_to_device(instruction, s)
+                response = read_from_device(s)
+                trigger_update = True
+                
             elif (cmd == "SET_COLLECTION_INTERVAL"):
                 while True:
                     inp = input("Enter the interval in ms\n>").strip()
                     if inp.lower() == "cancel" or inp.lower() == "exit":
                         print("Command cancelled. Capture frequency unchanged.")
-                        # set responded to true so we don't wait for a response
-                        responded = True
                         break
                     
                     if (not inp.isnumeric()):
@@ -262,14 +406,18 @@ if __name__ == "__main__":
                         print("Enter a value greater than 5000")
                         continue
                     
-                    instruction = instructions["SET_COLLECTION_INTERVAL"] + "_" + inp
+                    instruction = instructions["SET_COLLECTION_INTERVAL"] + "_" + inp.strip()
+                    write_to_device(instruction, s)
+                    response = read_from_device(s)
+
                     break
+                trigger_update = True                    
+                
             elif (cmd == "SET_DEVICE_NAME"):
                 while True:
                     inp = input("Enter the device name\n").strip()
                     if (inp.lower() == "cancel" or inp.lower() == "exit"):
                         print("Command canelled. Name not set.")
-                        responded = True
                         break   
                     
                     if (len(inp) > 12):
@@ -277,43 +425,24 @@ if __name__ == "__main__":
                         continue
                     
                     inp = inp.replace(' ', '_')
-                    instruction = instructions["SET_DEVICE_NAME"] + "_" + inp
+                    instruction = instructions["SET_DEVICE_NAME"] + "_" + inp.strip()
+                    write_to_device(instruction, s)
+                    response = read_from_device(s)
+                    
+                    # update local variables
+                    d["device_name"] = inp.strip()
+                    
                     break
+                
+                trigger_update = True
+                
+            elif (cmd == "GET_INFO"):
+                instruction = instructions["GET_INFO"]
+                write_to_device(instruction, s)
+                response = read_from_device(s)
+
             else:
                 instruction = instructions[cmd]
-            
-            # write the command to the device
-            print("Writing: '" + instruction + "'")
-            write_to_device(instruction)
-            
-            save_flag = None
-            
-            while not responded or s.in_waiting > 0:
-                
-                res = s.readline()
-                if (res): responded = True
-                res_str = res.decode().strip()
-                print('----\n' + res_str + '\n----')
-                
-                if (cmd == "EXPORT_ALL"):
-                    # if the previous command was export all, write all lines to it
-                    if (res_str != "DATA"):
-                        f.write(res_str)
-                        f.write('\n')
-                elif (cmd == "MANUAL_CAPTURE"):
-                    if (save_flag is None):
-                        inpa = input("Do you want to save? Y or n\n").strip()
-
-                        if inpa.lower() == 'y': 
-                            open_file("MANUAL")
-                            save_flag = True
-                        else: save_flag = False
-                        
-                    if save_flag == True:
-                        if (res_str != "DATA" and res_str != "OK"):
-                            f.write(res_str)
-                            f.write('\n')
-            # outside the loop means device done sending
-            print("Command completed.")
-            if (f): f.close();
+                response = "UNKNOWN COMMAND NOT SENT"
+        
 

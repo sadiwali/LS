@@ -59,7 +59,7 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 
 // VARIABLES
 int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
-bool paused = false;                                // is data capture paused?
+bool recording = false;                                // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification
@@ -276,16 +276,17 @@ void setup() {
   digitalWrite(7, HIGH); // turn LED ON
   attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
   // initialize serial port
-  Serial.begin(115200);
+  Serial.begin(921600);
   //while (!Serial) delay(10);
   
   // initialize the persistent storage
-  // structure looks like: "device_name,logging_interval,data_counter"  
   InternalFS.begin();
+  
 //  delay(1000);
 //  InternalFS.format();
 //  Serial.println("FORMAT COMPLETE");
 //  return;
+
   String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
   file.open(filename.c_str(), FILE_O_READ);
 
@@ -333,7 +334,7 @@ void setup() {
 
 /* Arduino loop function */
 void loop() {
-  if (Serial) {
+  if (Serial || !recording) {
     // cable plugged in   
     digitalWrite(7, HIGH);
     
@@ -361,12 +362,16 @@ void loop() {
         if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
           // 00: Toggle data capture while plugged in
           // TODO implement
+          recording = !recording;
+          Serial.println("DATA");
+          Serial.println(recording);
           Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
           // 01: collect a data point manually
           String manual_data = take_measurement(true);
           Serial.println("DATA");
           Serial.println(manual_data);
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
           // 02: export all data line by line
           // add the data export header
@@ -378,11 +383,18 @@ void loop() {
             String line = st.read_line(i,5000);
             Serial.println(line);
           }
+          Serial.println("OK");
           st.close_file();
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
           st.delete_file();
-          InternalFS.format();
+          
+          device_name = DEV_NAME_PREFIX;
+          logging_interval = DEF_CAPTURE_INTERVAL;
+          data_counter = 0;
+
+          update_memory();
+          
           Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
@@ -406,19 +418,19 @@ void loop() {
           
           setTime(h,m,s,d,mth,y);
           Serial.println("OK");
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '6') {
-          // 06: list number of entries
-          Serial.println("DATA");
-          Serial.println(data_counter);
+
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
           // 07: Hello
-          Serial.println("Hello");
+          Serial.println("DATA");
           // send name
           Serial.println(device_name);
           // send interval
           Serial.println(logging_interval);
           // send status
-          Serial.println(paused);
+          Serial.println(recording);
+          // send # of entries
+          Serial.println(data_counter);
+          Serial.println("OK");
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
           // 08: Set device name
           String instruction = String(ser_buffer);
@@ -432,6 +444,19 @@ void loop() {
                           String(data_counter) + " uptime: " + String(millis()/3600000, 8) + "h Logging interval: " + 
                           String(logging_interval) + "ms";
           Serial.println(to_ret);
+          Serial.println("OK");
+          
+        } else if (ser_buffer[0] == '1' && ser_buffer[1] == '0') {
+          // 10: Set NSP settings
+          // they are sent like this: 10[ae:1 or 0][frame_avg:1 to 999][int_time:1 to 1000]
+          String instruction = String(ser_buffer);
+
+          ae = (bool) instruction.substring(2, 3).toInt();
+          frame_avg = instruction.substring(3, 6).toInt();
+          int_time = instruction.substring(6, 10).toInt();
+          
+          Serial.println("OK");
+          
         } else {
           Serial.println("Err '" + String(ser_buffer) + "'");
 
