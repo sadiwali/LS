@@ -68,14 +68,14 @@ int mod_int_time = int_time;
 int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
 int mod_frame_avg = frame_avg;
 bool ae = true;                                     // use autoexposure?
-bool mod_ae = ae;
+bool mod_ae = ae;                                   // global variable 
 unsigned int data_counter = 0;                      // how many data points collected and stored
 
 // OBJECTS
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
 NSP32 nsp32( & adaptor, NSP32::ChannelSpi);         // NSP32 (using SPI channel)
 Storage st(SD_CS_PIN, LOG_FILENAME);                // the data storage object
-Adafruit_LittleFS_Namespace::File file(InternalFS); // the persistent file stored in persistent flash
+Adafruit_LittleFS_Namespace::File file(InternalFS); // the metadata file stored in persistent flash
 
 /* Get a reading from the NSP32 sensor */
 void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
@@ -84,24 +84,15 @@ void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae
   // get the spectrum data. Note that if ae is true, int_time is ignored
   nsp32.AcqSpectrum(0, int_time, frame_avg, ae);
   // wait until spectrum data completely collected
-  while (nsp32.GetReturnPacketSize() <= 0) {
-    nsp32.UpdateStatus(); // call UpdateStatus() to check async result
-  }
+  while (nsp32.GetReturnPacketSize() <= 0) nsp32.UpdateStatus();
   // data has been collected, extract into info
   nsp32.ExtractSpectrumInfo(info); 
 }
 
-/* Check  */
+/* Check if datapoint is too dark, okay, or too bright indicated by -1, 0, 1 respectively */
 int validate_reading(SpectrumInfo infoS) {
-  if (infoS.IntegrationTime == 1 || infoS.Y <= MIN_ACCEPTABLE_Y) {
-    // Too dark
-    return -1;
-  }
-
-  if (infoS.IsSaturated == 1) {
-    return 1;
-  }
-
+  if (infoS.IntegrationTime == 1 || infoS.Y <= MIN_ACCEPTABLE_Y) return -1;
+  if (infoS.IsSaturated == 1) return 1;
   return 0; 
 }
 
@@ -112,6 +103,10 @@ String take_measurement(bool manual_measurement=false) {
   
   bool dark_flag = true;
   bool too_dark = false;
+
+  int mod_int_time = int_time;
+  int mod_frame_avg = frame_avg;
+  bool mod_ae = ae;
 
   read_sensor(&infoS, mod_int_time, mod_frame_avg, mod_ae);
 
@@ -135,11 +130,12 @@ String take_measurement(bool manual_measurement=false) {
     } else if (validation_res == -1) {
       // too dark, try upping integration time until not saturated
       
-      // turn off auto-exposure, and set frame average to half to speed up finding the right integration time
+      // find the correct exposure time, use half the frames to save time and power
       mod_ae = false;
       mod_frame_avg = frame_avg / 2;
       
       if (dark_flag) {
+        // start with integration time set to 500
         dark_flag = false;
         mod_int_time = 500;
         continue;
@@ -268,13 +264,13 @@ void error_state(int code) {
   }
 }
 
-
 /* Arduino setup function. */
 void setup() {
   pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
   pinMode(7, OUTPUT); // onboard LED output
   digitalWrite(7, HIGH); // turn LED ON
-  attachInterrupt(digitalPinToInterrupt(PinReady), PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
+  attachInterrupt(digitalPinToInterrupt(PinReady), 
+                                        PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
   // initialize serial port
   Serial.begin(921600);
   //while (!Serial) delay(10);
@@ -334,7 +330,7 @@ void setup() {
 
 /* Arduino loop function */
 void loop() {
-  if (Serial || !recording) {
+  if (Serial || !recording || timeStatus() == timeNotSet) {
     // cable plugged in   
     digitalWrite(7, HIGH);
     
@@ -366,12 +362,14 @@ void loop() {
           Serial.println("DATA");
           Serial.println(recording);
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
           // 01: collect a data point manually
           String manual_data = take_measurement(true);
           Serial.println("DATA");
           Serial.println(manual_data);
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
           // 02: export all data line by line
           // add the data export header
@@ -384,6 +382,7 @@ void loop() {
             Serial.println(line);
           }
           Serial.println("OK");
+          
           st.close_file();
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
           // 03: Delete the data logging file
@@ -396,6 +395,7 @@ void loop() {
           update_memory();
           
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
           // 04: Set new collection interval
           // create string with serial buffer
@@ -404,6 +404,7 @@ void loop() {
           logging_interval = new_logging_interval;
           update_memory();
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
           // 05: Set date and time
           String instruction = String(ser_buffer);
@@ -431,17 +432,21 @@ void loop() {
           // send # of entries
           Serial.println(data_counter);
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
           // 08: Set device name
           String instruction = String(ser_buffer);
           device_name = DEV_NAME_PREFIX + instruction.substring(2);
           update_memory();
           Serial.println("OK");
+          
         } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
           // 09: Get device information
           Serial.println("DATA");
           String to_ret = "device_name: " + device_name + " data_points: " + 
-                          String(data_counter) + " uptime: " + String(millis()/3600000, 8) + "h Logging interval: " + 
+                          String(data_counter) +
+                          " uptime: " + String(millis()/3600000, 8) +
+                          "h Logging interval: " + 
                           String(logging_interval) + "ms";
           Serial.println(to_ret);
           Serial.println("OK");
@@ -459,19 +464,12 @@ void loop() {
           
         } else {
           Serial.println("Err '" + String(ser_buffer) + "'");
-
         }
       }
     }  
   
   } else {
-    // cable not plugged in
-
-    // if time has not been set, do nothing
-    if (timeStatus() == timeNotSet) {
-      return;
-    }
-    
+    // cable not plugged in, device ready to record
     digitalWrite(7, LOW);
     
     // for sleep offsetting

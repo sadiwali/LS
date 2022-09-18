@@ -18,9 +18,9 @@ cls = lambda: os.system('cls')              # clear console
 # CONSTANTS
 BAUDRATE = 921600                           # baudrate
 SER_TIMEOUT = 10                            # serial timeout (should be a few seconds longer than device sleep time)
-MIN_WAVELENGTH = 340
-MAX_WAVELENGTH = 1010
-WAVELENGTH_STEPSIZE = 5
+MIN_WAVELENGTH = 340                        # sensor minimum wavelength
+MAX_WAVELENGTH = 1010                       # sensor maximum wavelength
+WAVELENGTH_STEPSIZE = 5                     # sensor stepsize
 
 # serial
 s = None                                    # the currently selected serial device
@@ -49,16 +49,12 @@ instructions = {
 
 local_functions = [
     "DISCONNECT",
-    "TOGGLE_AE",
-    "SET_FRAME_AVG",
-    "SET_INT_TIME",
+    "SETUP",
 ]
 
 def connect_to_device(port_name):
-    s = None
     try:
-        s = serial.Serial(port=port_name, baudrate=BAUDRATE, timeout=SER_TIMEOUT)
-        return s
+        return serial.Serial(port=port_name, baudrate=BAUDRATE, timeout=SER_TIMEOUT)
     except Exception as e:
         return None
 
@@ -73,12 +69,10 @@ def write_to_device(msg, serial_object):
            
 def read_from_device(serial_object):
     response = []
-    recv_ok = False
-    while (recv_ok == False):
+    line = ""
+    while (line.lower() != "ok"):
         line = serial_object.readline().decode().strip()
-        if (line.lower() == "ok"):
-            recv_ok = True
-        if (line.lower() != "Err ''"):
+        if (line.lower() != "Err ''" and line.lower() != "ok"):
             response.append(line)
     return response
 
@@ -144,23 +138,17 @@ def update_device_status(s):
     except Exception as e:
         return None
                 
-
 def find_devices():
     # list of serial ports connected to the computer
     ports = []
     
-    while True:
-        ports = serial.tools.list_ports.comports()
-        
-        if len(ports) > 0:
-            break
-        
+    while len(ports) <= 0:
+        ports = serial.tools.list_ports.comports()        
         print("There are no serial ports available. Retrying in 1 second.")
         time.sleep(1)
         
     # for detecting which serial devices are open spectral sensors  
-    responses = [None] * len(ports)
-    threads = [None] * len(ports)
+    responses, threads = [None] * len(ports)
 
     # say hello to each device in a thread
     for i in range(len(threads)):
@@ -168,11 +156,10 @@ def find_devices():
         threads[i].start()
     
     # wait for every device to respond
-    for i in range(len(threads)):
-        threads[i].join()
+    for i in range(len(threads)): threads[i].join()
         
     # detected spectral sensors          
-    devices = [i for i in responses if i is not None]
+    devices = [device for device in responses if device is not None]
 
     return devices     
 
@@ -187,6 +174,7 @@ def get_formatted_date():
 # format a datapoint for quick graphing
 def get_formatted_datapoint(line):
     tokens = line.split(',')
+    
     timestamp = tokens[0] + " " + tokens[1]
     manual = bool(int(tokens[2]))
     int_time = int(tokens[3])
@@ -198,17 +186,14 @@ def get_formatted_datapoint(line):
     cie_y = float(tokens[9])
     cie_z = float(tokens[10])
     
-    
     x = [i for i in range(MIN_WAVELENGTH, MAX_WAVELENGTH + WAVELENGTH_STEPSIZE, WAVELENGTH_STEPSIZE)]
     y = [float(i) for i in tokens[11:-1]]
 
-    print(len(x), len(y))
     return [x, y, timestamp, manual, int_time, frame_avg, ae, is_saturated, is_dark, cie_x, cie_y, cie_z]
 
 def flush_serial(s):
     while s.in_waiting > 0:
-        s.readline()
-    
+        s.readline()   
         
 if __name__ == "__main__":
               
@@ -297,7 +282,18 @@ if __name__ == "__main__":
                 
                 if (cmd == "DISCONNECT"):
                     s.close()                        
-                
+                elif (cmd == "SETUP"):
+
+                    device_name = ""
+
+
+                    while True:
+                        inp = input("Set a device name? (NSP)\n>").strip()
+                        if (len(inp) == 0):
+                            print("Invalid name")
+                            continue
+                            
+
                 break
 
             # find the right command to send
