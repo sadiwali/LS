@@ -63,12 +63,9 @@ bool recording = false;                                // is data capture paused
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification
-int int_time = 500;                                 // default integration time for sensor
-int mod_int_time = int_time;                    
+int int_time = 500;                                 // default integration time for sensor           
 int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
-int mod_frame_avg = frame_avg;
 bool ae = true;                                     // use autoexposure?
-bool mod_ae = ae;                                   // global variable 
 unsigned int data_counter = 0;                      // how many data points collected and stored
 
 // OBJECTS
@@ -78,15 +75,16 @@ Storage st(SD_CS_PIN, LOG_FILENAME);                // the data storage object
 Adafruit_LittleFS_Namespace::File file(InternalFS); // the metadata file stored in persistent flash
 
 /* Get a reading from the NSP32 sensor */
-void read_sensor(SpectrumInfo *info, int int_time= 0, int frame_avg = 3, bool ae = true) {
+void read_sensor(SpectrumInfo *info, int use_int_time= 0, int use_frame_avg = 3, bool use_ae = true) {
+  
   // wakeup the sensor if sleeping
   nsp32.Wakeup();
   // get the spectrum data. Note that if ae is true, int_time is ignored
-  nsp32.AcqSpectrum(0, int_time, frame_avg, ae);
+  nsp32.AcqSpectrum(0, use_int_time, use_frame_avg, use_ae);
   // wait until spectrum data completely collected
   while (nsp32.GetReturnPacketSize() <= 0) nsp32.UpdateStatus();
   // data has been collected, extract into info
-  nsp32.ExtractSpectrumInfo(info); 
+  nsp32.ExtractSpectrumInfo(info);
 }
 
 /* Check if datapoint is too dark, okay, or too bright indicated by -1, 0, 1 respectively */
@@ -96,43 +94,45 @@ int validate_reading(SpectrumInfo infoS) {
   return 0; 
 }
 
-/* Take a manual or automatic measurement. */
+/* Take a manual or automatic measurement, and return the formatted datapoint line */
 String take_measurement(bool manual_measurement=false) {
-  digitalWrite(7, HIGH); // turn on LED
+  
   SpectrumInfo infoS; // variable for storing the spectrum data
   
   bool dark_flag = true;
   bool too_dark = false;
 
+  // modified settings to use in this session
   int mod_int_time = int_time;
   int mod_frame_avg = frame_avg;
   bool mod_ae = ae;
 
-  read_sensor(&infoS, mod_int_time, mod_frame_avg, mod_ae);
+  
 
   while (true) {
     
-    if (mod_int_time >= 800) {
-      // raising integration time did not improve reading
-      too_dark = true;
-      break;
-    }
-    
-    // pass in the settings, and take the reading from the NSP sensor
     read_sensor(&infoS, mod_int_time, mod_frame_avg, mod_ae);
-
-    // validate the results
+    // validate the datapoint
     int validation_res = validate_reading(infoS);
     
     if (validation_res == 1) {
       // too bright, nothing to do
       break;
+      
     } else if (validation_res == -1) {
       // too dark, try upping integration time until not saturated
+
+      // too dark even with int_time maxed
+      if (mod_int_time >= 800) {
+        too_dark = true;
+        break;
+      }
       
       // find the correct exposure time, use half the frames to save time and power
       mod_ae = false;
       mod_frame_avg = frame_avg / 2;
+      
+      if (mod_frame_avg < 1) mod_frame_avg = 1;
       
       if (dark_flag) {
         // start with integration time set to 500
@@ -146,38 +146,30 @@ String take_measurement(bool manual_measurement=false) {
     } else {
       // no issues, break out of loop
       break;
+      
     }
   }
 
   // format each line of CSV file into this line
-  String line = format_line(infoS, manual_measurement, too_dark);
+  String line = format_line(infoS, manual_measurement, too_dark, mod_frame_avg, mod_ae);
 
   // Standby seems to clear SpectrumInfo, therefore call it after processing the data
   nsp32.Standby(0);
 
-  // reset the ae, int_time, and frame_avg
-  mod_ae = ae;
-  mod_int_time = int_time;
-  mod_frame_avg = frame_avg;
-
   // write the data to the SD card
-  bool write_res = st.write_line(&line);
-  if (!write_res) {
-    error_state(3);
-  }
-  
+  if (!st.write_line(&line)) error_state(3);
+
   data_counter++;
   
   update_memory();
-  
-  // turn off LED
-  digitalWrite(7, LOW); 
-  
+    
   return line;
 }
 
-String format_line(SpectrumInfo infoS, bool manual_measurement, bool too_dark) {
+String format_line(SpectrumInfo infoS, bool manual_measurement, bool too_dark, int mod_frame_avg, int mod_ae) {
+  
   String line = "";
+  
   // 1. Which date was this data point collected on?
   line += String(day());
   line += "/";
@@ -227,17 +219,19 @@ String format_line(SpectrumInfo infoS, bool manual_measurement, bool too_dark) {
   line += ",";
 
   // 10. Then put in the spectrum data. Sensor reads 340-1010 nm (inclusive) in 5 nm increments
-  for (int j = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
-       j <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
-       j++) {
-    line += String(infoS.Spectrum[j] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
+  for (int i = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
+       i <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
+       i++) {
+    line += String(infoS.Spectrum[i] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
     line += ",";
   }
+  
   return line;
 }
 
 /* Update the persistent storage */
 void update_memory() {
+  
   // overwrite the file
   String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
   InternalFS.remove(filename.c_str());
@@ -251,37 +245,7 @@ void update_memory() {
   }
 }
 
-/* Infinite loop LED to indicate an error. */
-void error_state(int code) {
-  while (true) {
-    for (int i = 0; i < code; i ++) {
-      digitalWrite(7, HIGH);
-      delay(250);
-      digitalWrite(7, LOW);
-      delay(250);
-    }
-    delay(500);
-  }
-}
-
-/* Arduino setup function. */
-void setup() {
-  pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
-  pinMode(7, OUTPUT); // onboard LED output
-  digitalWrite(7, HIGH); // turn LED ON
-  attachInterrupt(digitalPinToInterrupt(PinReady), 
-                                        PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
-  // initialize serial port
-  Serial.begin(921600);
-  //while (!Serial) delay(10);
-  
-  // initialize the persistent storage
-  InternalFS.begin();
-  
-//  delay(1000);
-//  InternalFS.format();
-//  Serial.println("FORMAT COMPLETE");
-//  return;
+void read_memory() {
 
   String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
   file.open(filename.c_str(), FILE_O_READ);
@@ -311,25 +275,66 @@ void setup() {
     data_counter = readline.substring(delimiters[1] + 1).toInt();
     
     file.close();
+    
   } else {
     update_memory();
   }
+  
+}
+
+/* Infinite loop LED to indicate an error. */
+void error_state(int code) {
+
+  while (true) {
+    for (int i = 0; i < code; i ++) {
+      digitalWrite(7, HIGH);
+      delay(250);
+      digitalWrite(7, LOW);
+      delay(250);
+    }
+    delay(500);
+  }
+  
+}
+
+/* Arduino setup function. */
+void setup() {
+  
+  pinMode(PinReady, INPUT_PULLUP); // use pull-up for ready pin
+  pinMode(7, OUTPUT); // onboard LED output
+  digitalWrite(7, HIGH); // turn LED ON
+  attachInterrupt(digitalPinToInterrupt(PinReady), 
+                                        PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
+  // initialize serial port
+  Serial.begin(BAUDRATE);
+//  while (!Serial) delay(10);
+  
+  // initialize the persistent storage
+  InternalFS.begin();
+  
+//  delay(1000);
+//  InternalFS.format();
+//  Serial.println("FORMAT COMPLETE");
+//  return;
+
+  // read persistent flash storage into memory
+  read_memory();
 
   // attempt to initialize the SD
   
-  st.init();
+ 
   // if the SD storage object is errored, go into error state
-  if (st.is_errored()) {
-    error_state(1);
-  }
+  if (!st.init()) error_state(1);
   
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
+  
 }
 
 /* Arduino loop function */
 void loop() {
+  
   if (Serial || !recording || timeStatus() == timeNotSet) {
     // cable plugged in   
     digitalWrite(7, HIGH);
@@ -484,6 +489,7 @@ void loop() {
     // sleep for some interval before capturing data again
     delay(logging_interval - collection_duration);
   }  
+  
 }
 
 /* NSP32m ready interrupt */

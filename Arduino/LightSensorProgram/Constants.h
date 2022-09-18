@@ -7,6 +7,7 @@
 
 
 #define DEV_NAME_PREFIX       "NSP"                 // the device name prefix
+#define BAUDRATE              921600                // the device baudrate
 
 #define DEF_CAPTURE_INTERVAL  5000                  // how frequently to capture data in ms
 #define MIN_WAVELENGTH        340                   // the minimum wavelength we are interested in
@@ -25,7 +26,4 @@
 #define NSP_RESET             28                    // NSP reset pin
 #define NSP_READY             29                    // NSP ready pin
 
-// DEBUG
-#define NO_SAVE               false                  // do not save measurements (for debugging SD)
-  
 #endif

@@ -14,17 +14,16 @@ class Storage {
     String log_file_name;                           // file name and directory to save the CSV data log to
     File log_file;                                  // the file variable that holds the log file
     int CS_PIN;                                     // the SPI chip select pin
-    bool ERR;                                       // was there an error with the Storage class?
 
   public:
     /* Initialize the class with chip select pin and file name */  
     Storage(int CS, String filename);
 
     /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
-    void init();
+    bool init();
 
     /* Once the SD card reader is initialized, attempt to open the log file */
-    void open_file();
+    bool open_file();
   
     /* Close the SD file */
     void close_file();
@@ -39,9 +38,6 @@ class Storage {
 
     /* Read a line and move onto the next. Consecutively calling this function returns all lines in file. */
     String read_line(unsigned int line, unsigned int buf_size);
-  
-    /* If SD is errored, return true, else return false. */
-    bool is_errored();
 };
 
 #endif

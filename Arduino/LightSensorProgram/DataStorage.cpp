@@ -5,26 +5,18 @@ Storage::Storage(int CS, String filename)
 : CS_PIN(CS), log_file_name(filename + FILE_EXT) {}
 
 /* Attempt to initialize the SD card reader. If unsuccessful, set error flag */
-void Storage::init() {
-  // SD is not opened if NO_SAVE is true
-  if (!NO_SAVE && !SD.begin( CS_PIN) ) {
-    // unable to open SD card, set error flag
-    ERR = true;
-    return;
-  }
-
+bool Storage::init() {
+  if (!SD.begin(CS_PIN)) return false;
+  return true;
 }
 
 /* Once the SD card reader is initialized, attempt to open the log file */
-void Storage::open_file() {
+bool Storage::open_file() {
   // attempt to open SD card for writing
-  if (log_file) return;
+  if (log_file) return true;
   
   log_file = SD.open(log_file_name, FILE_WRITE);
-  if (!log_file) {
-    ERR = true;
-    return;
-  }
+  if (!log_file) return false;
 
   // file opened, check if new file
   if (log_file.size() == 0) {
@@ -39,6 +31,8 @@ void Storage::open_file() {
     // finally write the header string to file
     log_file.println(line);
   }
+
+  return true;
 }
 
 /* Close the SD file */
@@ -56,22 +50,18 @@ bool Storage::delete_file() {
 
 /* Open the file, Write a line, then close the file. */
 bool Storage::write_line(String *line) {
-  if (NO_SAVE) return true; // skip if no save flag is set
-  open_file();
-  
-  if (!log_file) return false;
+  if (!open_file()) return false;
   
   log_file.println(*line);
   
   close_file();
+  
   return true;
 }
 
 /* Read a line given line number from the SD file */
 String Storage::get_line(unsigned int line) {
-  if (!log_file) {
-    open_file();
-  }
+  if (!open_file()) return "";
   
   String line_to_ret = "";
 
@@ -113,9 +103,4 @@ String Storage::read_line(unsigned int line, unsigned int buf_size) {
   }
 
   return line_to_ret;
-}
-
-/* If SD is errored, return true, else return false. */
-bool Storage::is_errored() {
-  return ERR;
 }
