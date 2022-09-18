@@ -59,10 +59,13 @@ const unsigned int PinReady = NSP_READY;            // pin Ready
 
 // VARIABLES
 int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
-bool recording = false;                                // is data capture paused?
+unsigned long last_collection_time = 0;             // remember the last collection interval
+unsigned long time_offset = 0;                      // how much time to offset by if device hung for long operations
+bool recording = false;                             // is data capture paused?
 char ser_buffer[16];                                // the serial buffer
 int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification
+double calibration_factor = DEF_CALIBRATION_FACTOR;     // the calibration factor
 int int_time = 500;                                 // default integration time for sensor           
 int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
 bool ae = true;                                     // use autoexposure?
@@ -162,6 +165,8 @@ String take_measurement(bool manual_measurement=false) {
   data_counter++;
   
   update_memory();
+
+  Serial.println(line);
     
   return line;
 }
@@ -222,7 +227,7 @@ String format_line(SpectrumInfo infoS, bool manual_measurement, bool too_dark, i
   for (int i = ((MIN_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
        i <= ((MAX_WAVELENGTH - SENSOR_MIN_WAVELENGTH) / WAVELENGTH_STEPSIZE);
        i++) {
-    line += String(infoS.Spectrum[i] * CALIBRATION_FACTOR, CAPTURE_PRECISION); 
+    line += String(infoS.Spectrum[i] * calibration_factor, CAPTURE_PRECISION); 
     line += ",";
   }
   
@@ -236,9 +241,10 @@ void update_memory() {
   String filename = "/" + String(METADATA_FILENAME) + String(FILE_EXT);
   InternalFS.remove(filename.c_str());
   if (file.open(filename.c_str(), FILE_O_WRITE)) {
-    String writeline = device_name + "," + String(logging_interval) + "," + String(data_counter);
+    String writeline = device_name + "," + String(logging_interval) + "," + String(data_counter) + "," + String(calibration_factor);
     file.write(writeline.c_str(), strlen(writeline.c_str()));
     file.close();
+
   } else {
     // could not create file
     error_state(2);
@@ -269,10 +275,18 @@ void read_memory() {
         d_count++;
       }
     }
-    
+
+    if (d_count != 3) {
+      // the memory file is not as expected, re-create it
+      file.close();
+      update_memory();
+      return;
+    }
+    Serial.println(readline);
     device_name = readline.substring(0, delimiters[0]);
     logging_interval = readline.substring(delimiters[0] + 1, delimiters[1]).toInt();
-    data_counter = readline.substring(delimiters[1] + 1).toInt();
+    data_counter = readline.substring(delimiters[1] + 1, delimiters[2]).toInt();
+    calibration_factor = readline.substring(delimiters[2] + 1).toFloat();
     
     file.close();
     
@@ -307,11 +321,11 @@ void setup() {
                                         PinReadyTriggerISR, FALLING); // enable interrupt for NSP READY
   // initialize serial port
   Serial.begin(BAUDRATE);
-//  while (!Serial) delay(10);
+  while (!Serial) delay(10);
   
   // initialize the persistent storage
   InternalFS.begin();
-  
+//  
 //  delay(1000);
 //  InternalFS.format();
 //  Serial.println("FORMAT COMPLETE");
@@ -320,9 +334,6 @@ void setup() {
   // read persistent flash storage into memory
   read_memory();
 
-  // attempt to initialize the SD
-  
- 
   // if the SD storage object is errored, go into error state
   if (!st.init()) error_state(1);
   
@@ -332,163 +343,213 @@ void setup() {
   
 }
 
+unsigned long paused_time = 0;
+unsigned long pause_duration = 0;
+
+void pause(bool do_pause) {
+  if (do_pause) {
+    // remember when we paused
+    paused_time = millis();
+    recording = false;
+  } else {
+    pause_duration = millis() - paused_time;
+    recording = true;
+  }
+}
+
+void sleep_until_capture() {
+//  if (!recording || timeStatus() == timeNotSet){
+  if (!recording) {
+    if (!Serial) delay(SLEEP_DURATION);
+    return;
+  }
+
+  unsigned long time_remaining = logging_interval - (millis() - last_collection_time + pause_duration);
+
+  if (!Serial) delay(min(time_remaining, SLEEP_DURATION));
+
+  if (time_remaining <= 0) {
+    last_collection_time = millis();
+    pause_duration = 0;
+    take_measurement(false);
+  }
+  
+}
+
+String build_string(char ser_buffer[]) {
+  Serial.println("Buidling string...");  
+  String to_ret = "";
+  int i = 0;
+  while (true) {
+    if (ser_buffer[i] == '\0') {
+      return to_ret;
+    }
+
+    to_ret += ser_buffer[i];
+    i ++;
+    Serial.println(i);
+  }
+
+}
+String s_buf = "";
 /* Arduino loop function */
 void loop() {
   
-  if (Serial || !recording || timeStatus() == timeNotSet) {
+  if (Serial) {
     // cable plugged in   
     digitalWrite(7, HIGH);
+
     
-    // TODO: print the status of the sensor, is it reading? paused? etc.
     
-    if (Serial.available() > 0) {
-      // data available
-      char c = (char) Serial.read();
-      bool end_of_line = false;
-      
-      if (c != '\n') {
-        // if character is not EOL
-        ser_buffer[read_index] = c;
-        read_index ++;
+    while (Serial.available()) {
+      char c = Serial.read();
+      if (c == '\n') {
+        Serial.flush();
+        break;
       } else {
-        end_of_line = true;
-        // mark the end of buffer for String conversion
-        ser_buffer[read_index] = '\0';
+        s_buf += (char) c;
       }
+    }
+
+    
+
+    if (s_buf != "") {
+
+      Serial.println(s_buf);
+
       
-      if (end_of_line || read_index >= sizeof(ser_buffer)/sizeof(char)) {
-        // end of line reached, or buffer has been filled, read the buffer
-        read_index = 0;
-
-        if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
-          // 00: Toggle data capture while plugged in
-          // TODO implement
-          recording = !recording;
-          Serial.println("DATA");
-          Serial.println(recording);
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
-          // 01: collect a data point manually
-          String manual_data = take_measurement(true);
-          Serial.println("DATA");
-          Serial.println(manual_data);
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
-          // 02: export all data line by line
-          // add the data export header
-          Serial.println("DATA");
-
-          st.open_file();
-
-          for (int i = 0; i < data_counter + 1; i++) {
-            String line = st.read_line(i,5000);
-            Serial.println(line);
-          }
-          Serial.println("OK");
-          
-          st.close_file();
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
-          // 03: Delete the data logging file
-          st.delete_file();
-          
-          device_name = DEV_NAME_PREFIX;
-          logging_interval = DEF_CAPTURE_INTERVAL;
-          data_counter = 0;
-
-          update_memory();
-          
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
-          // 04: Set new collection interval
-          // create string with serial buffer
-          String instruction = String(ser_buffer);
-          int new_logging_interval = instruction.substring(instruction.indexOf("_")+1).toInt();
-          logging_interval = new_logging_interval;
-          update_memory();
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
-          // 05: Set date and time
-          String instruction = String(ser_buffer);
-          
-          int y = instruction.substring(2, 6).toInt();
-          int mth = instruction.substring(6, 8).toInt();
-          int d = instruction.substring(8, 10).toInt();
-
-          int h = instruction.substring(10, 12).toInt();
-          int m = instruction.substring(12, 14).toInt();
-          int s = instruction.substring(14, 16).toInt();
-          
-          setTime(h,m,s,d,mth,y);
-          Serial.println("OK");
-
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
-          // 07: Hello
-          Serial.println("DATA");
-          // send name
-          Serial.println(device_name);
-          // send interval
-          Serial.println(logging_interval);
-          // send status
-          Serial.println(recording);
-          // send # of entries
-          Serial.println(data_counter);
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
-          // 08: Set device name
-          String instruction = String(ser_buffer);
-          device_name = DEV_NAME_PREFIX + instruction.substring(2);
-          update_memory();
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
-          // 09: Get device information
-          Serial.println("DATA");
-          String to_ret = "device_name: " + device_name + " data_points: " + 
-                          String(data_counter) +
-                          " uptime: " + String(millis()/3600000, 8) +
-                          "h Logging interval: " + 
-                          String(logging_interval) + "ms";
-          Serial.println(to_ret);
-          Serial.println("OK");
-          
-        } else if (ser_buffer[0] == '1' && ser_buffer[1] == '0') {
-          // 10: Set NSP settings
-          // they are sent like this: 10[ae:1 or 0][frame_avg:1 to 999][int_time:1 to 1000]
-          String instruction = String(ser_buffer);
-
-          ae = (bool) instruction.substring(2, 3).toInt();
-          frame_avg = instruction.substring(3, 6).toInt();
-          int_time = instruction.substring(6, 10).toInt();
-          
-          Serial.println("OK");
-          
+      if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '0') {
+        // 00: Toggle data capture while plugged in
+        // TODO implement
+        if (recording) {
+          pause(true);
         } else {
-          Serial.println("Err '" + String(ser_buffer) + "'");
+          pause(false);
         }
+        Serial.println("DATA");
+        Serial.println(recording);
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '1') {
+        // 01: collect a data point manually
+        String manual_data = take_measurement(true);
+        Serial.println("DATA");
+        Serial.println(manual_data);
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '2') {
+        // 02: export all data line by line
+  
+        // pause recording because this is a lengthy command
+        pause(true);
+        
+        Serial.println("DATA");
+  
+        st.open_file();
+  
+        for (int i = 0; i < data_counter + 1; i++) {
+          String line = st.read_line(i, 5000);
+          Serial.println(line);
+        }
+  
+        pause(false);
+        
+        Serial.println("OK");
+        
+        st.close_file();
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '3') {
+        // 03: Delete the data logging file
+        st.delete_file();
+        
+        device_name = DEV_NAME_PREFIX;
+        logging_interval = DEF_CAPTURE_INTERVAL;
+        data_counter = 0;
+        calibration_factor = DEF_CALIBRATION_FACTOR;
+        
+        update_memory();
+        
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '4') {
+        // 04: Set new collection interval
+        // create string with serial buffer
+        int new_logging_interval = s_buf.substring(s_buf.indexOf("_")+1).toInt();
+        logging_interval = new_logging_interval;
+        update_memory();
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '5') {
+        // 05: Set date and time      
+        int y = s_buf.substring(2, 6).toInt();
+        int mth = s_buf.substring(6, 8).toInt();
+        int d = s_buf.substring(8, 10).toInt();
+  
+        int h = s_buf.substring(10, 12).toInt();
+        int m = s_buf.substring(12, 14).toInt();
+        int s = s_buf.substring(14, 16).toInt();
+        
+        setTime(h,m,s,d,mth,y);
+        Serial.println("OK");
+  
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '7') {
+        // 07: Hello
+        Serial.println("DATA");
+        // send name
+        Serial.println(device_name);
+        // send interval
+        Serial.println(logging_interval);
+        // send status
+        Serial.println(recording);
+        // send # of entries
+        Serial.println(data_counter);
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '8') {
+        // 08: Set device name
+        //device_name = String(DEV_NAME_PREFIX) + String(s_buf.substring(2));
+        device_name = "DDDFSDFSD";
+        Serial.println(device_name);
+        //update_memory();
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '9') {
+        // 09: Get device information
+        Serial.println("DATA");
+        String to_ret = "device_name: " + device_name + " data_points: " + 
+                        String(data_counter) +
+                        " uptime: " + String(millis()/60000, 8) +
+                        "m Logging interval: " + 
+                        String(logging_interval) + "ms";
+        Serial.println(to_ret);
+        Serial.println("OK");
+        
+      } else if (s_buf.charAt(0) == '1' && s_buf.charAt(1) == '0') {
+        // 10: Set NSP settings
+        // they are sent like this: 10[ae:1 or 0][frame_avg:1 to 999][int_time:1 to 1000]
+        ae = (bool) s_buf.substring(2, 3).toInt();
+        frame_avg = s_buf.substring(3, 6).toInt();
+        int_time = s_buf.substring(6, 10).toInt();
+        
+        Serial.println("OK");
+  
+      } else if (s_buf.charAt(0) == '1' && s_buf.charAt(1) == '1') {
+        // 11: Set calibration factor
+        int new_calibration_factor = s_buf.substring(s_buf.indexOf("_")+1).toFloat();
+        calibration_factor = new_calibration_factor;
+        update_memory();
+        Serial.println("OK");
+        
+      } else {
+        Serial.println("Err '" + s_buf + "'");
       }
-    }  
-  
-  } else {
-    // cable not plugged in, device ready to record
-    digitalWrite(7, LOW);
-    
-    // for sleep offsetting
-    unsigned long record_start_ms = millis();
 
-    // take and record the spectral measurement
-    take_measurement(false);
+      s_buf = "";
+    }
     
-    // after the reading is done, calculate how long the data collection took to offset the sleep time
-    unsigned long collection_duration = millis() - record_start_ms;
-  
-    // sleep for some interval before capturing data again
-    delay(logging_interval - collection_duration);
-  }  
+  }
+
+  // hang for 15s or do a data capture when it is time
+  //sleep_until_capture();
   
 }
 

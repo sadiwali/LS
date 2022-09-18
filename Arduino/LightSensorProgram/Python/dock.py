@@ -21,6 +21,7 @@ SER_TIMEOUT = 10                            # serial timeout (should be a few se
 MIN_WAVELENGTH = 340                        # sensor minimum wavelength
 MAX_WAVELENGTH = 1010                       # sensor maximum wavelength
 WAVELENGTH_STEPSIZE = 5                     # sensor stepsize
+MIN_LOGGING_INTERVAL = 10000                # the minimum logging interval
 
 # serial
 s = None                                    # the currently selected serial device
@@ -45,11 +46,13 @@ instructions = {
     "SET_DEVICE_NAME": "08",
     "GET_INFO": "09",
     "_NSP_SETTINGS": "10",
+    "SET_CALIBRATION_FACTOR": "11",
 }
 
 local_functions = [
     "DISCONNECT",
     "SETUP",
+    "REFRESH",
 ]
 
 def connect_to_device(port_name):
@@ -70,10 +73,9 @@ def write_to_device(msg, serial_object):
 def read_from_device(serial_object):
     response = []
     line = ""
-    while (line.lower() != "ok"):
+    while (line.lower() != "ok" and not ("err" in line.lower())):
         line = serial_object.readline().decode().strip()
-        if (line.lower() != "Err ''" and line.lower() != "ok"):
-            response.append(line)
+        response.append(line)
     return response
 
 # open a new file for writing. If file name already exists, append a number
@@ -148,8 +150,9 @@ def find_devices():
         time.sleep(1)
         
     # for detecting which serial devices are open spectral sensors  
-    responses, threads = [None] * len(ports)
-
+    responses = [None] * len(ports)
+    threads = [None] * len(ports)
+    
     # say hello to each device in a thread
     for i in range(len(threads)):
         threads[i] = Thread(target=say_hello, args=(ports[i].name, responses, i))
@@ -195,6 +198,14 @@ def flush_serial(s):
     while s.in_waiting > 0:
         s.readline()   
         
+def is_float(val):     
+    try:
+        float(val)
+        return True
+    except ValueError:
+        return False
+    
+    
 if __name__ == "__main__":
               
     # start main loop
@@ -231,8 +242,10 @@ if __name__ == "__main__":
         instruction = instructions["_SET_DATETIME"] + date
         write_to_device(instruction, s)
         resp = read_from_device(s)
+        
         if len(resp) <= 0 or resp[0].lower() != "ok":
             response = "Time could not be set."
+            response = resp
         else:
             response = "Time has been set successfully to " + date
             
@@ -250,6 +263,7 @@ if __name__ == "__main__":
                 
             cls()
             print(response)
+            
             print('---')
             # second loop, choose instructions to send to the device selected
             print("Selected device: " + d["device_name"] + " on port: " + 
@@ -257,20 +271,25 @@ if __name__ == "__main__":
                   ("RECORDING" if d["device_status"] == '1' else "PAUSED") +
                   ". Recording interval is set to " + str(d["logging_interval"]))
             print("---")
+            
+            
+            
             for i, key in enumerate(instructions.keys()):
-                
                 if (key == "TOGGLE_DATA_CAPTURE"):
                     print("[" + str(i) + "] " + ("STOP_RECORDING" if d["device_status"] == "1" else "START_RECORDING"))
                 elif (key == "EXPORT_ALL"): 
                     print("[" + str(i) + "] " + key + " (" + str(d["data_counter"]) + " entries)")
                 else:
                     print("[" + str(i) + "] " + key)
+                    
+            for i, key in enumerate(local_functions):
+                print("[" + str(i + len(instructions.keys())) + "] " + key)                
                 
             inp = input("Choose a command by entering the number in front\n>")
             
             if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) >= (len(instructions.keys()) +
                                                                             len(local_functions))):
-                print("Invalid entry. Please try again.")
+                response = "Invalid entry. Please try again."
                 continue
             
             inp = int(inp)
@@ -293,7 +312,11 @@ if __name__ == "__main__":
                             print("Invalid name")
                             continue
                             
-
+                elif (cmd == "REFRESH"):
+                    trigger_update = True
+                    response = "Refreshed."
+                    continue
+                
                 break
 
             # find the right command to send
@@ -314,7 +337,7 @@ if __name__ == "__main__":
                 while True:
                     inp = input("Do you want to save the result? y or n or cancel\n>").strip()
                     if inp.lower() == "cancel" or inp.lower() == "exit":
-                        print("Command cancelled. Datapoint not captured.")
+                        response = "Command cancelled. Datapoint not captured."
                         break
                     if (inp.lower() == 'y'):
                         save_file = True
@@ -325,7 +348,7 @@ if __name__ == "__main__":
                     
                     inp = input("Do you want to graph the result? y or n or cancel\n>").strip()
                     if inp.lower() == "cancel" or inp.lower() == "exit":
-                        print("Command cancelled. Datapoint not captured.")
+                        response = "Command cancelled. Datapoint not captured."
                         break
                     
                     if (inp.lower() == 'y'):
@@ -334,33 +357,33 @@ if __name__ == "__main__":
                         do_graph = False
                     else:
                         continue
+                        
+                    instruction = instructions["MANUAL_CAPTURE"]
+                    write_to_device(instruction, s)
+                    response = read_from_device(s)
                     
+                    trigger_update = True
+                    
+                    if (save_file):
+                        f, file_name = open_file("MANUAL_" + get_formatted_date())
+                        f.write(response[1] + "\n")
+                        f.close()
+                    
+                    if (do_graph):
+                        print(response)
+                        x, y, timestamp, manual, int_time, frame_avg, ae, is_saturated, is_dark, cie_x, cie_y, cie_z  = get_formatted_datapoint(response[1])
+                        plt.plot(x,y)
+                        plt.xlim([MIN_WAVELENGTH, MAX_WAVELENGTH])
+                        plt.ylabel("Power (W/m^2)")
+                        plt.xlabel("Wavelength (nm)")
+                        plt.title("Manual Datapoint Capture at " + timestamp)
+                        plt.text(500, 300, "X: " + str(cie_x), ha='center', va='center', transform=None)
+                        plt.text(500, 280, "Y: " + str(cie_y), ha='center', va='center', transform=None)
+                        plt.text(500, 260, "Z: " + str(cie_z), ha='center', va='center', transform=None)
+                        mpc.cursor(hover=True)
+                        plt.show()
+                        
                     break
-                    
-                instruction = instructions["MANUAL_CAPTURE"]
-                write_to_device(instruction, s)
-                response = read_from_device(s)
-                
-                trigger_update = True
-                
-                if (save_file):
-                    f, file_name = open_file("MANUAL_" + get_formatted_date())
-                    f.write(response[1] + "\n")
-                    f.close()
-                
-                if (do_graph):
-                    print(response)
-                    x, y, timestamp, manual, int_time, frame_avg, ae, is_saturated, is_dark, cie_x, cie_y, cie_z  = get_formatted_datapoint(response[1])
-                    plt.plot(x,y)
-                    plt.xlim([MIN_WAVELENGTH, MAX_WAVELENGTH])
-                    plt.ylabel("Power (W/m^2)")
-                    plt.xlabel("Wavelength (nm)")
-                    plt.title("Manual Datapoint Capture at " + timestamp)
-                    plt.text(500, 300, "X: " + str(cie_x), ha='center', va='center', transform=None)
-                    plt.text(500, 280, "Y: " + str(cie_y), ha='center', va='center', transform=None)
-                    plt.text(500, 260, "Z: " + str(cie_z), ha='center', va='center', transform=None)
-                    mpc.cursor(hover=True)
-                    plt.show()
                     
             elif (cmd == "EXPORT_ALL"):
                 f, file_name = open_file(get_formatted_date())
@@ -392,14 +415,14 @@ if __name__ == "__main__":
                 while True:
                     inp = input("Enter the interval in ms\n>").strip()
                     if inp.lower() == "cancel" or inp.lower() == "exit":
-                        print("Command cancelled. Capture frequency unchanged.")
+                        response = "Command cancelled. Capture frequency unchanged."
                         break
                     
                     if (not inp.isnumeric()):
-                        print("Enter a numeric value greater than 5000")
+                        print("Enter a numeric value greater than " + str(MIN_LOGGING_INTERVAL))
                         continue
-                    elif (int(inp) < 5000):
-                        print("Enter a value greater than 5000")
+                    elif (int(inp) < MIN_LOGGING_INTERVAL):
+                        print("Enter a value greater than " + str(MIN_LOGGING_INTERVAL))
                         continue
                     
                     instruction = instructions["SET_COLLECTION_INTERVAL"] + "_" + inp.strip()
@@ -411,9 +434,9 @@ if __name__ == "__main__":
                 
             elif (cmd == "SET_DEVICE_NAME"):
                 while True:
-                    inp = input("Enter the device name\n").strip()
+                    inp = input("Enter the device name\n>").strip()
                     if (inp.lower() == "cancel" or inp.lower() == "exit"):
-                        print("Command canelled. Name not set.")
+                        response = "Command cancelled. Name not set."
                         break   
                     
                     if (len(inp) > 12):
@@ -421,7 +444,7 @@ if __name__ == "__main__":
                         continue
                     
                     inp = inp.replace(' ', '_')
-                    instruction = instructions["SET_DEVICE_NAME"] + "_" + inp.strip()
+                    instruction = instructions["SET_DEVICE_NAME"] + "_" + inp
                     write_to_device(instruction, s)
                     response = read_from_device(s)
                     
@@ -436,6 +459,24 @@ if __name__ == "__main__":
                 instruction = instructions["GET_INFO"]
                 write_to_device(instruction, s)
                 response = read_from_device(s)
+                
+            elif (cmd == "SET_CALIBRATION_FACTOR"):
+                while True:
+                    inp = input("Enter new sensor calibration factor\n>").strip()
+                    if (inp.lower() == "cancel" or inp.lower() == "exit"):
+                        response = "Command canelled. Calibration factor not set."
+                        break   
+
+                    if (not is_float(inp)):
+                        print("Enter a numeric value")
+                        continue
+                    
+                    instruction = instructions["SET_CALIBRATION_FACTOR"] + "_" + inp
+                    write_to_device(instruction, s)
+                    response = read_from_device(s)
+                    
+                    break
+                    
 
             else:
                 instruction = instructions[cmd]
