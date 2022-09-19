@@ -119,7 +119,7 @@ def update_device_status(s):
         time.sleep(0.1)
         
         res = s.readline().decode().strip()
-        
+
         if res.lower() == "data":
             # if data is the first response, second response is the device name
             device_name = s.readline().decode().strip()
@@ -146,7 +146,7 @@ def find_devices():
     
     while len(ports) <= 0:
         ports = serial.tools.list_ports.comports()        
-        print("There are no serial ports available. Retrying in 1 second.")
+        print("Looking for devices...")
         time.sleep(1)
         
     # for detecting which serial devices are open spectral sensors  
@@ -212,18 +212,21 @@ if __name__ == "__main__":
     while True:
         devices = find_devices()
         while True:
-            # first loop, select a device
-            print("Detected devices:")
-            
-            for i, device in enumerate(devices):
-                print("[" + str(i) + "] " + device["device_name"])
+            # first loop, if only one device, automatically connect
+            if (len(devices) == 1):
+                inp = 0
+            else:
+                print("Detected devices:")
                 
-            inp = input("Select a device to connect to")
-            if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) >= len(devices)):
-                print("Invalid entry. Please try again.")
-                continue
-            
-            inp = int(inp)
+                for i, device in enumerate(devices):
+                    print("[" + str(i) + "] " + device["device_name"])
+                    
+                inp = input("Select a device to connect to\n>")
+                if (not inp.strip().isnumeric() or int(inp) < 0 or int(inp) >= len(devices)):
+                    print("Invalid entry. Please try again.")
+                    continue
+                
+                inp = int(inp)
             
             # S is the selected OSS device
             d = devices[inp]
@@ -366,6 +369,7 @@ if __name__ == "__main__":
                     
                     if (save_file):
                         f, file_name = open_file("MANUAL_" + get_formatted_date())
+                        f.write(file_header())
                         f.write(response[1] + "\n")
                         f.close()
                     

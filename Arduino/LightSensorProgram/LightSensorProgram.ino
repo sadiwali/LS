@@ -62,14 +62,15 @@ int logging_interval = DEF_CAPTURE_INTERVAL;        // the data logging interval
 unsigned long last_collection_time = 0;             // remember the last collection interval
 unsigned long time_offset = 0;                      // how much time to offset by if device hung for long operations
 bool recording = false;                             // is data capture paused?
-char ser_buffer[16];                                // the serial buffer
-int read_index = 0;                                 // the serial buffer read index
 String device_name = DEV_NAME_PREFIX;               // the device name for easier identification
 double calibration_factor = DEF_CALIBRATION_FACTOR;     // the calibration factor
 int int_time = 500;                                 // default integration time for sensor           
 int frame_avg = DEF_FRAME_AVG;                      // how many frames to average
 bool ae = true;                                     // use autoexposure?
 unsigned int data_counter = 0;                      // how many data points collected and stored
+
+char ser_buffer[16];                                // the serial buffer
+int read_index = 0;                                 // the serial buffer read index
 
 // OBJECTS
 ArduinoAdaptor adaptor(PinRst, PinSS);              // master MCU adaptor
@@ -165,8 +166,6 @@ String take_measurement(bool manual_measurement=false) {
   data_counter++;
   
   update_memory();
-
-  Serial.println(line);
     
   return line;
 }
@@ -257,20 +256,18 @@ void read_memory() {
   file.open(filename.c_str(), FILE_O_READ);
 
   if (file) {
-    // file exits, read the line
     uint32_t readlen;
-    char buffer[64] = {0};
-    readlen = file.read(buffer, sizeof(buffer));
-    buffer[readlen] = '\0';
-    String readline = String(buffer);
-    
-    // parse the line
-    int delimiters[2];
+    char sbuffer[64] = {0};
+    readlen = file.read(sbuffer, sizeof(sbuffer));
+    sbuffer[readlen] = '\0';
+    String readline = String(sbuffer);
+
+    int delimiters[3];
     int d_count = 0;
-    
+
     for (int i = 0; i < readlen; i++) {
       // loop through the character array
-      if (buffer[i] == ',') {
+      if (sbuffer[i] == ',') {
         delimiters[d_count] = i;
         d_count++;
       }
@@ -282,14 +279,13 @@ void read_memory() {
       update_memory();
       return;
     }
-    Serial.println(readline);
+
     device_name = readline.substring(0, delimiters[0]);
     logging_interval = readline.substring(delimiters[0] + 1, delimiters[1]).toInt();
     data_counter = readline.substring(delimiters[1] + 1, delimiters[2]).toInt();
     calibration_factor = readline.substring(delimiters[2] + 1).toFloat();
-    
+
     file.close();
-    
   } else {
     update_memory();
   }
@@ -340,7 +336,8 @@ void setup() {
   // initialize NSP32
   nsp32.Init();
   nsp32.Standby(0);
-  
+
+  pause(true);
 }
 
 unsigned long paused_time = 0;
@@ -364,7 +361,11 @@ void sleep_until_capture() {
     return;
   }
 
-  unsigned long time_remaining = logging_interval - (millis() - last_collection_time + pause_duration);
+  long time_diff = millis() - (last_collection_time + pause_duration);
+  if (time_diff > logging_interval) {
+    time_diff = logging_interval;
+  }
+  unsigned long time_remaining = logging_interval - time_diff;
 
   if (!Serial) delay(min(time_remaining, SLEEP_DURATION));
 
@@ -376,22 +377,8 @@ void sleep_until_capture() {
   
 }
 
-String build_string(char ser_buffer[]) {
-  Serial.println("Buidling string...");  
-  String to_ret = "";
-  int i = 0;
-  while (true) {
-    if (ser_buffer[i] == '\0') {
-      return to_ret;
-    }
 
-    to_ret += ser_buffer[i];
-    i ++;
-    Serial.println(i);
-  }
 
-}
-String s_buf = "";
 /* Arduino loop function */
 void loop() {
   
@@ -399,26 +386,25 @@ void loop() {
     // cable plugged in   
     digitalWrite(7, HIGH);
 
-    
+    bool end_of_line = false;
     
     while (Serial.available()) {
       char c = Serial.read();
       if (c == '\n') {
+        end_of_line = true;
+        ser_buffer[read_index] = '\0';
+        read_index = 0;
         Serial.flush();
         break;
       } else {
-        s_buf += (char) c;
+        ser_buffer[read_index] = c;
+        read_index ++;
       }
     }
 
-    
-
-    if (s_buf != "") {
-
-      Serial.println(s_buf);
-
+    if (end_of_line) {      
       
-      if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '0') {
+      if (ser_buffer[0] == '0' && ser_buffer[1] == '0') {
         // 00: Toggle data capture while plugged in
         // TODO implement
         if (recording) {
@@ -430,14 +416,14 @@ void loop() {
         Serial.println(recording);
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '1') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '1') {
         // 01: collect a data point manually
         String manual_data = take_measurement(true);
         Serial.println("DATA");
         Serial.println(manual_data);
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '2') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '2') {
         // 02: export all data line by line
   
         // pause recording because this is a lengthy command
@@ -457,7 +443,7 @@ void loop() {
         Serial.println("OK");
         
         st.close_file();
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '3') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '3') {
         // 03: Delete the data logging file
         st.delete_file();
         
@@ -470,16 +456,18 @@ void loop() {
         
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '4') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '4') {
         // 04: Set new collection interval
-        // create string with serial buffer
+
+        String s_buf = String(ser_buffer);
         int new_logging_interval = s_buf.substring(s_buf.indexOf("_")+1).toInt();
         logging_interval = new_logging_interval;
         update_memory();
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '5') {
-        // 05: Set date and time      
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '5') {
+        // 05: Set date and time  
+        String s_buf = String(ser_buffer);    
         int y = s_buf.substring(2, 6).toInt();
         int mth = s_buf.substring(6, 8).toInt();
         int d = s_buf.substring(8, 10).toInt();
@@ -491,7 +479,7 @@ void loop() {
         setTime(h,m,s,d,mth,y);
         Serial.println("OK");
   
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '7') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '7') {
         // 07: Hello
         Serial.println("DATA");
         // send name
@@ -504,15 +492,14 @@ void loop() {
         Serial.println(data_counter);
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '8') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '8') {
         // 08: Set device name
-        //device_name = String(DEV_NAME_PREFIX) + String(s_buf.substring(2));
-        device_name = "DDDFSDFSD";
-        Serial.println(device_name);
-        //update_memory();
+        String s_buf = String(ser_buffer);
+        device_name = String(DEV_NAME_PREFIX) + String(s_buf.substring(s_buf.indexOf("_")+1));
+        update_memory();
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '0' && s_buf.charAt(1) == '9') {
+      } else if (ser_buffer[0] == '0' && ser_buffer[1] == '9') {
         // 09: Get device information
         Serial.println("DATA");
         String to_ret = "device_name: " + device_name + " data_points: " + 
@@ -523,33 +510,34 @@ void loop() {
         Serial.println(to_ret);
         Serial.println("OK");
         
-      } else if (s_buf.charAt(0) == '1' && s_buf.charAt(1) == '0') {
+      } else if (ser_buffer[0] == '1' && ser_buffer[1] == '0') {
         // 10: Set NSP settings
         // they are sent like this: 10[ae:1 or 0][frame_avg:1 to 999][int_time:1 to 1000]
+        String s_buf = String(ser_buffer);
         ae = (bool) s_buf.substring(2, 3).toInt();
         frame_avg = s_buf.substring(3, 6).toInt();
         int_time = s_buf.substring(6, 10).toInt();
         
         Serial.println("OK");
   
-      } else if (s_buf.charAt(0) == '1' && s_buf.charAt(1) == '1') {
+      } else if (ser_buffer[0] == '1' && ser_buffer[1] == '1') {
         // 11: Set calibration factor
+        String s_buf = String(ser_buffer);
         int new_calibration_factor = s_buf.substring(s_buf.indexOf("_")+1).toFloat();
         calibration_factor = new_calibration_factor;
         update_memory();
         Serial.println("OK");
         
       } else {
-        Serial.println("Err '" + s_buf + "'");
+        Serial.println("Err '" + String(ser_buffer) + "'");
       }
 
-      s_buf = "";
     }
     
   }
 
   // hang for 15s or do a data capture when it is time
-  //sleep_until_capture();
+  sleep_until_capture();
   
 }
 
