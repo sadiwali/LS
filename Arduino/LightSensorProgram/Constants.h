@@ -9,8 +9,8 @@
 #define DEV_NAME_PREFIX       "NSP"                 // the device name prefix
 #define BAUDRATE              115200                // the device baudrate
 
-#define DEF_CAPTURE_INTERVAL  10000                  // how frequently to capture data in ms
-#define SLEEP_DURATION        15000                 // how many ms to go into deep sleep for in between wake checks
+#define DEF_CAPTURE_INTERVAL  10000                 // how frequently to capture data in ms
+#define SLEEP_DURATION        5000                  // how many ms to go into deep sleep for in between wake checks
 #define MIN_WAVELENGTH        340                   // the minimum wavelength we are interested in
 #define MAX_WAVELENGTH        1010                  // the maximum wavelength we are interested in
 #define SENSOR_MIN_WAVELENGTH 340                   // the minimum sensing wavelength (for W1 sensor)

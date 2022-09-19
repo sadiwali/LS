@@ -361,10 +361,8 @@ void sleep_until_capture() {
     return;
   }
 
-  long time_diff = millis() - (last_collection_time + pause_duration);
-  if (time_diff > logging_interval) {
-    time_diff = logging_interval;
-  }
+  long time_diff = min((millis() - (last_collection_time + pause_duration)), logging_interval);
+
   unsigned long time_remaining = logging_interval - time_diff;
 
   if (!Serial) delay(min(time_remaining, SLEEP_DURATION));
