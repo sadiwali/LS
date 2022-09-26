@@ -109,7 +109,6 @@ def say_hello(port, response, ind):
         with serial.Serial(port=port, baudrate=BAUDRATE, timeout=SER_TIMEOUT) as _s:
             device = update_device_status(_s)
             response[ind] = device
-            
     except Exception as e:
         pass      
     
